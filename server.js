@@ -348,7 +348,8 @@ app.get('/api/duty', need(), wrap(async req => {
 app.get('/api/duty/:id/availability', need(isBoard), wrap(async req => D.shiftAvailability(Number(req.params.id))));
 app.post('/api/duty/:id/signup', need(isBoard), wrap(async req => { D.signUp(req.person, Number(req.params.id), req.body.personId ? Number(req.body.personId) : null); return { ok: true }; }));
 app.delete('/api/duty/:id/signup', need(isBoard), wrap(async req => { D.withdraw(req.person, Number(req.params.id), req.query.person ? Number(req.query.person) : null); return { ok: true }; }));
-app.patch('/api/duty/:id', need(isAdmin), wrap(async req => { run('UPDATE duty_shifts SET needed=? WHERE id=?', Number(req.body.needed) || 1, req.params.id); return { ok: true }; }));
+app.get('/api/duty-summary', need(isBoard), wrap(async req => D.summary(req.query.from || T.today(), Number(req.query.weeks) || 4)));
+app.patch('/api/duty/:id', need(r => r.admin || r.dutyCoord), wrap(async req => { run('UPDATE duty_shifts SET needed=? WHERE id=?', Number(req.body.needed) || 1, req.params.id); return { ok: true }; }));
 
 // ---------- umpires ----------
 const assignmentSql = `SELECT a.*, e.date, e.start, e.end, e.slot_code, e.field_id, e.division_id, e.home_team_id, e.away_team_id, e.status AS event_status,
@@ -493,14 +494,14 @@ app.get('/api/payroll', need(isBoard), wrap(async req => X.payrollRows(req.query
 // ---------- people & teams (admin) ----------
 app.get('/api/people', need(isBoard), wrap(async () => all(`SELECT p.*, (SELECT GROUP_CONCAT(t.name || ' (' || tc.role || ')', ', ') FROM team_coaches tc JOIN teams t ON t.id=tc.team_id WHERE tc.person_id=p.id AND t.active=1) AS teams FROM people p ORDER BY active DESC, last, first`)));
 app.get('/api/directory', need(), wrap(async () => all(`SELECT id, first, last, phone, email, is_board, is_umpire, is_ump_coord, is_president FROM people WHERE active=1 AND (is_board=1 OR is_admin=1 OR is_ump_coord=1) ORDER BY last, first`)));
-const personCols = ['first', 'last', 'email', 'phone', 'is_admin', 'is_board', 'is_coach', 'is_umpire', 'is_ump_coord', 'is_president', 'can_edit_schedule', 'active'];
+const personCols = ['first', 'last', 'email', 'phone', 'is_admin', 'is_board', 'is_coach', 'is_umpire', 'is_ump_coord', 'is_duty_coord', 'is_president', 'can_edit_schedule', 'active'];
 app.post('/api/people', need(isAdmin), wrap(async req => {
   const b = req.body;
   if (!b.first || !b.last) throw new Error('First and last name are required.');
   if (!b.email && !b.phone) throw new Error('Add a phone or email so they can log in.');
-  const r = run(`INSERT INTO people(first,last,email,phone,is_admin,is_board,is_coach,is_umpire,is_ump_coord,is_president,can_edit_schedule,cal_token)
-                 VALUES(?,?,?,?,?,?,?,?,?,?,?,lower(hex(randomblob(16))))`, b.first, b.last, b.email || null, normalizePhone(b.phone),
-    +!!b.is_admin, +!!b.is_board, +!!b.is_coach, +!!b.is_umpire, +!!b.is_ump_coord, +!!b.is_president, +!!b.can_edit_schedule);
+  const r = run(`INSERT INTO people(first,last,email,phone,is_admin,is_board,is_coach,is_umpire,is_ump_coord,is_president,can_edit_schedule,is_duty_coord,cal_token)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,lower(hex(randomblob(16))))`, b.first, b.last, b.email || null, normalizePhone(b.phone),
+    +!!b.is_admin, +!!b.is_board, +!!b.is_coach, +!!b.is_umpire, +!!b.is_ump_coord, +!!b.is_president, +!!b.can_edit_schedule, +!!b.is_duty_coord);
   return { id: r.lastInsertRowid };
 }));
 app.patch('/api/people/:id', need(isAdmin), wrap(async req => {
@@ -601,6 +602,7 @@ app.get('/api/demo/accounts', (req, res) => {
     pick('Board member who coaches', `SELECT p.* FROM people p JOIN team_coaches tc ON tc.person_id=p.id WHERE p.is_board=1 AND p.is_admin=0 LIMIT 1`),
     pick('Board member (no team)', `SELECT * FROM people p WHERE is_board=1 AND is_admin=0 AND id NOT IN (SELECT person_id FROM team_coaches) LIMIT 1`),
     pick('Umpire coordinator', `SELECT * FROM people WHERE is_ump_coord=1 AND is_admin=0 LIMIT 1`),
+    pick('Field duty coordinator', `SELECT * FROM people WHERE is_duty_coord=1 AND is_admin=0 LIMIT 1`),
   ].filter(Boolean));
 });
 app.get('/healthz', (req, res) => res.json({ ok: true }));

@@ -207,6 +207,25 @@ const ok = m => console.log('  ✓', m);
       assert.equal((await call('admin', 'GET', '/api/meta')).teams.length, before); ok('switching back brings the old season\'s teams back');
     }
 
+    // ----- field duty coordinator -----
+    {
+      const dc = get('SELECT * FROM people WHERE is_duty_coord=1 LIMIT 1');
+      await login('dcoord', dc.email);
+      const me3 = await call('dcoord', 'GET', '/api/me'); assert(me3.roles.dutyCoord); 
+      const sum = await call('dcoord', 'GET', `/api/duty-summary?from=${require('./db').setting('practice_start')}`);
+      assert(sum.weeks.length === 4 && sum.load.length > 5 && sum.next7.total >= sum.next7.filled); ok(`coordinator overview: ${sum.next7.filled}/${sum.next7.total} filled next 7 days, ${sum.open.length} open in 4 weeks`);
+      const openShift = sum.open[0];
+      if (openShift) {
+        const who = (await call('dcoord', 'GET', `/api/duty/${openShift.id}/availability`)).find(a => a.canWork && a.status !== 'signed_up');
+        await call('dcoord', 'POST', `/api/duty/${openShift.id}/signup`, { personId: who.id }); ok('coordinator can assign a board member to a shift');
+      }
+      const D2 = require('./engine-duty');
+      const left = get(`SELECT s.* FROM duty_shifts s WHERE (SELECT COUNT(*) FROM duty_signups d WHERE d.shift_id=s.id)=0 ORDER BY date DESC LIMIT 1`);
+      const at = new Date(T.at(left.date, left.start).getTime() - 20 * 3600000); at.setHours(Math.max(at.getHours(), 9));
+      await D2.sendReminders(at);
+      assert(get(`SELECT COUNT(*) AS n FROM notifications WHERE person_id=? AND title LIKE 'Field duty still empty%'`, dc.id).n > 0); ok('coordinator is alerted when a shift is still empty inside 24 hours');
+    }
+
     // permissions
     let denied = false; try { await call('coach', 'POST', '/api/build/games', {}); } catch (e) { denied = /403/.test(e.message); } assert(denied); ok('coach cannot rebuild schedules');
     console.log('\nAll checks passed.');

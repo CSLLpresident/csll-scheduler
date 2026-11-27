@@ -234,3 +234,10 @@ th,td{padding:6px 8px}
   .filters select{flex:1 1 30%;min-width:0}
   .weeknav b{min-width:0;font-size:16px}
 }
+.cov{height:8px;background:var(--soft);border-radius:6px;overflow:hidden;margin-top:6px;flex:1}
+.covfill{height:100%;background:var(--ok);border-radius:6px}
+.covfill.mid{background:#C98A12}.covfill.low{background:var(--bad)}
+.covrow{display:flex;align-items:center;gap:10px;padding:4px 0}
+.covrow .cov{margin-top:0}
+.grid.four{grid-template-columns:1fr 1fr}
+@media (min-width:700px){.grid.four{grid-template-columns:repeat(4,1fr)}}

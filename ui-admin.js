@@ -151,7 +151,7 @@
   }
 
   // ---------------- people ----------------
-  const ROLE_COLS = [['is_admin', 'Admin'], ['is_president', 'President'], ['is_board', 'Board'], ['is_ump_coord', 'Ump coordinator'], ['is_umpire', 'Umpire'], ['is_coach', 'Coach'], ['can_edit_schedule', 'Can edit schedule']];
+  const ROLE_COLS = [['is_admin', 'Admin'], ['is_president', 'President'], ['is_board', 'Board'], ['is_ump_coord', 'Ump coordinator'], ['is_duty_coord', 'Field duty coordinator'], ['is_umpire', 'Umpire'], ['is_coach', 'Coach'], ['can_edit_schedule', 'Can edit schedule']];
   async function people(out) {
     const list = await C.get('/api/people');
     let q = '', role = '';

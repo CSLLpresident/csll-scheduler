@@ -90,6 +90,7 @@ function rolesOf(p) {
     teamScheduler: coachTeams.some(t => t.role !== 'practice'),
     umpire: !!p.is_umpire,
     umpCoord: !!(p.is_ump_coord || p.is_admin),
+    dutyCoord: !!(p.is_duty_coord || p.is_admin),
     president: !!p.is_president,
     scheduler: !!(p.is_admin || p.can_edit_schedule),
     coachTeams,

@@ -65,11 +65,12 @@ function previewPeople(text) {
     const phone = normalizePhone(pick(r, 'cell', 'mobile', 'phone'));
     const rolesText = pick(r, 'roles', 'role').toLowerCase();
     const roles = {
-      is_board: yes(pick(r, 'board')) || /board/.test(rolesText),
+      is_board: yes(pick(r, 'board')) || /board|duty coord|field duty/.test(rolesText),
       is_umpire: yes(pick(r, 'umpire')) || /ump/.test(rolesText) && !/coord/.test(rolesText) || /umpire/.test(rolesText),
       is_coach: yes(pick(r, 'coach')) || /coach/.test(rolesText),
       is_admin: /admin/.test(rolesText),
-      is_ump_coord: /coord/.test(rolesText),
+      is_ump_coord: /ump\w* coord/.test(rolesText) || (/coord/.test(rolesText) && !/duty|field/.test(rolesText)),
+      is_duty_coord: /(duty|field)\w* coord/.test(rolesText),
       is_president: /president/.test(rolesText),
     };
     const existing = matchPerson(email, phone, first, last);
@@ -88,16 +89,16 @@ function applyPeople(text) {
       if (id) {
         const p = get('SELECT * FROM people WHERE id=?', id);
         run(`UPDATE people SET first=?, last=?, email=COALESCE(NULLIF(?,''),email), phone=COALESCE(?,phone),
-             is_board=?, is_umpire=?, is_coach=?, is_admin=?, is_ump_coord=?, is_president=? WHERE id=?`,
+             is_board=?, is_umpire=?, is_coach=?, is_admin=?, is_ump_coord=?, is_president=?, is_duty_coord=? WHERE id=?`,
           r.first, r.last, r.email, r.phone,
           +(p.is_board || r.roles.is_board), +(p.is_umpire || r.roles.is_umpire), +(p.is_coach || r.roles.is_coach),
-          +(p.is_admin || r.roles.is_admin), +(p.is_ump_coord || r.roles.is_ump_coord), +(p.is_president || r.roles.is_president), id);
+          +(p.is_admin || r.roles.is_admin), +(p.is_ump_coord || r.roles.is_ump_coord), +(p.is_president || r.roles.is_president), +(p.is_duty_coord || r.roles.is_duty_coord), id);
         updated++;
       } else {
-        id = run(`INSERT INTO people(first,last,email,phone,is_board,is_umpire,is_coach,is_admin,is_ump_coord,is_president,cal_token)
-                  VALUES(?,?,?,?,?,?,?,?,?,?,lower(hex(randomblob(16))))`,
+        id = run(`INSERT INTO people(first,last,email,phone,is_board,is_umpire,is_coach,is_admin,is_ump_coord,is_president,is_duty_coord,cal_token)
+                  VALUES(?,?,?,?,?,?,?,?,?,?,?,lower(hex(randomblob(16))))`,
           r.first, r.last, r.email || null, r.phone || null, +r.roles.is_board, +r.roles.is_umpire, +r.roles.is_coach,
-          +r.roles.is_admin, +r.roles.is_ump_coord, +r.roles.is_president).lastInsertRowid;
+          +r.roles.is_admin, +r.roles.is_ump_coord, +r.roles.is_president, +r.roles.is_duty_coord).lastInsertRowid;
         added++;
       }
       if (r.team) {

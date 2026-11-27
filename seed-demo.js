@@ -30,6 +30,7 @@ const person = (roles = {}) => {
 tx(() => {
   const admin = run(`INSERT INTO people(first,last,email,phone,is_admin,is_board,is_president,cal_token) VALUES('Demo','President','admin@example.com','+19795550000',1,1,1,lower(hex(randomblob(16))))`).lastInsertRowid;
   const board = Array.from({ length: 12 }, (_, i) => person({ board: true, coord: i === 11 }));
+  run('UPDATE people SET is_duty_coord=1 WHERE id=?', board[10]);
   const divs = all('SELECT * FROM divisions WHERE active=1');
   const counts = { TB: 10, JMAA: 8, JMAAA: 8, SMAA: 6, SMAAA: 6, MAJ: 6, INT: 2, JR: 4, SR: 2 };
   const mascots = ['Aggies', 'Bulldogs', 'Cardinals', 'Dodgers', 'Express', 'Falcons', 'Giants', 'Hawks', 'Ironbirds', 'Jays', 'Knights', 'Lions'];
@@ -93,6 +94,17 @@ console.log('practices:', p.created, 'short:', p.short.length);
 const u = generateUmpires({ start: setting('practice_start'), end: seasonEnd(), seed: 3 });
 console.log('umpires filled:', u.filled, 'still open:', u.stillOpen);
 console.log('duty shifts:', rebuildShifts(setting('practice_start'), seasonEnd()));
+{ // some board members already signed up: most shifts this week, fewer further out
+  const { shiftAvailability } = require('./engine-duty');
+  const shifts = all('SELECT * FROM duty_shifts WHERE date >= ? ORDER BY date LIMIT 120', T.today());
+  let k = 0;
+  shifts.forEach((sh, i) => {
+    const chance = i < 16 ? 0.8 : i < 40 ? 0.55 : 0.3;
+    if (((i * 37) % 100) / 100 >= chance) return;
+    const ok = shiftAvailability(sh.id).filter(a => a.canWork && a.status !== 'unavailable');
+    if (ok.length) run('INSERT OR IGNORE INTO duty_signups(shift_id,person_id) VALUES(?,?)', sh.id, ok[(k++) % ok.length].id);
+  });
+}
 run('UPDATE events SET published=1');
 resetPriority(11);
 console.log('Demo data ready. Log in with admin@example.com (DEMO_MODE=true shows the code on screen).');

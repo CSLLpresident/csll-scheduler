@@ -83,14 +83,14 @@ function signUp(person, shiftId, forPersonId = null) {
   const pid = forPersonId || person.id;
   const target = get('SELECT * FROM people WHERE id=?', pid);
   if (!target || !(target.is_board || target.is_admin)) throw new Error('Field duty is for board members.');
-  if (forPersonId && forPersonId !== person.id && !person.is_admin) throw new Error('Only an admin can assign someone else.');
+  if (forPersonId && forPersonId !== person.id && !person.is_admin && !person.is_duty_coord) throw new Error('Only the field duty coordinator or an admin can assign someone else.');
   const av = shiftAvailability(shiftId).find(a => a.id === pid);
   if (av && av.status === 'coaching_game') throw new Error('You are coaching a game during this shift.');
   run('INSERT OR IGNORE INTO duty_signups(shift_id,person_id) VALUES(?,?)', shiftId, pid);
 }
 function withdraw(person, shiftId, forPersonId = null) {
   const pid = forPersonId || person.id;
-  if (pid !== person.id && !person.is_admin) throw new Error('Only an admin can remove someone else.');
+  if (pid !== person.id && !person.is_admin && !person.is_duty_coord) throw new Error('Only the field duty coordinator or an admin can remove someone else.');
   run('DELETE FROM duty_signups WHERE shift_id=? AND person_id=?', shiftId, pid);
 }
 
@@ -122,12 +122,52 @@ async function sendReminders(now = new Date()) {
     run('INSERT OR IGNORE INTO duty_reminders(shift_id,hours,sent_at) VALUES(?,?,datetime(\'now\'))', sh.id, point);
     // mark earlier points as done too so they never fire late
     points.filter(h => h > point).forEach(h => run('INSERT OR IGNORE INTO duty_reminders(shift_id,hours,sent_at) VALUES(?,?,datetime(\'now\'))', sh.id, h));
-    if (!recipients.length) continue;
     const label = `${sh.park_short} ${sh.shift === 'early' ? 'early' : 'late'} field duty, ${T.shortDate(sh.date)} ${T.fmt12(sh.start)}-${T.fmt12(sh.end)}`;
+    // the field duty coordinator hears about shifts still empty at 24 hours and later
+    if (point <= 24) {
+      const coords = all('SELECT id FROM people WHERE is_duty_coord=1 AND active=1').map(r => r.id);
+      if (coords.length) await notify(coords, { title: `Field duty still empty (${Math.round(hoursLeft)}h)`, body: `${label}. ${recipients.length} board members were reminded.`, link: '#/duty', sms: point <= 12 });
+    }
+    if (!recipients.length) continue;
     await notify(recipients, { title: `Field duty still open (${Math.round(hoursLeft)}h)`, body: `${label} needs someone. Sign up in the app.`, link: '#/duty' });
     sent += recipients.length;
   }
   return sent;
 }
 
-module.exports = { rebuildShifts, shiftAvailability, signUp, withdraw, sendReminders, boardMembers };
+/** The field duty coordinator's quick view: coverage, open shifts, and how the load is spread across the board */
+function summary(from = T.today(), weeks = 4) {
+  const to = T.addDays(T.mondayOf(from), weeks * 7 - 1);
+  const shifts = all(`SELECT s.*, p.short AS park_short, (SELECT COUNT(*) FROM duty_signups d WHERE d.shift_id=s.id) AS signed,
+                        (SELECT MAX(hours) FROM duty_reminders r WHERE r.shift_id=s.id) AS first_reminder, (SELECT MIN(hours) FROM duty_reminders r WHERE r.shift_id=s.id) AS last_reminder
+                      FROM duty_shifts s JOIN parks p ON p.id=s.park_id WHERE s.date BETWEEN ? AND ? ORDER BY s.date, s.shift, p.sort`, from, to);
+  const in7 = shifts.filter(s => s.date <= T.addDays(from, 6)), in14 = shifts.filter(s => s.date <= T.addDays(from, 13));
+  const filled = list => list.filter(s => s.signed >= s.needed).length;
+  const weeksOut = [];
+  for (let w = 0; w < weeks; w++) {
+    const ws = T.addDays(T.mondayOf(from), w * 7), we = T.addDays(ws, 6);
+    const list = shifts.filter(s => s.date >= ws && s.date <= we);
+    weeksOut.push({ start: ws, total: list.length, filled: filled(list) });
+  }
+  const open = shifts.filter(s => s.signed < s.needed).slice(0, 40)
+    .map(s => ({ ...s, hoursLeft: Math.round((T.at(s.date, s.start) - new Date()) / 3600000) }));
+  const board = boardMembers();
+  const seasonStart = setting('practice_start');
+  const signups = all(`SELECT d.person_id, s.date FROM duty_signups d JOIN duty_shifts s ON s.id=d.shift_id WHERE s.date >= ?`, seasonStart);
+  const thisWeekStart = T.mondayOf(T.today()), thisWeekEnd = T.addDays(thisWeekStart, 6);
+  const coaches = new Set(all(`SELECT tc.person_id FROM team_coaches tc JOIN teams t ON t.id=tc.team_id WHERE t.active=1`).map(r => r.person_id));
+  const load = board.map(p => {
+    const mine = signups.filter(x => x.person_id === p.id);
+    return { id: p.id, first: p.first, last: p.last, phone: p.phone, coaches: coaches.has(p.id),
+      season: mine.length, thisWeek: mine.filter(x => x.date >= thisWeekStart && x.date <= thisWeekEnd).length,
+      upcoming: mine.filter(x => x.date >= T.today() && x.date <= to).length };
+  }).sort((a, b) => a.upcoming - b.upcoming || a.season - b.season || a.last.localeCompare(b.last));
+  return {
+    from, to,
+    next7: { total: in7.length, filled: filled(in7) }, next14: { total: in14.length, filled: filled(in14) },
+    weeks: weeksOut, open, load,
+    noShiftThisWeek: load.filter(l => l.thisWeek === 0).length,
+  };
+}
+
+module.exports = { rebuildShifts, shiftAvailability, signUp, withdraw, sendReminders, boardMembers, summary };

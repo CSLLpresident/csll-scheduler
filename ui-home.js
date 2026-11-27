@@ -2,7 +2,7 @@
 CS.S.pages.home = async el => {
   const C = CS, { S, esc } = C, r = S.me.roles;
   const start = C.today(), end = C.addDays(start, 13);
-  const [events, umps, duty, swaps, reqs, umpOpen, umpSwaps, status] = await Promise.all([
+  const [events, umps, duty, swaps, reqs, umpOpen, umpSwaps, status, dsum] = await Promise.all([
     r.coachTeams.length ? C.get(`/api/events?start=${start}&end=${end}&mine=1`) : [],
     r.umpire ? C.get(`/api/umps/assignments?start=${start}&end=${end}&mine=1`) : [],
     C.get(`/api/duty?start=${start}&end=${C.addDays(start, 6)}`),
@@ -11,6 +11,7 @@ CS.S.pages.home = async el => {
     r.umpire ? C.get(`/api/umps/assignments?start=${start}&end=${end}&open=1`) : [],
     r.umpire ? C.get('/api/umps/swaps') : [],
     r.admin ? C.get('/api/admin/status') : null,
+    r.dutyCoord ? C.get('/api/duty-summary') : null,
   ]);
 
   // merge everything that's "mine" into one timeline
@@ -44,6 +45,11 @@ CS.S.pages.home = async el => {
       <div class="stat"><b>${status.counts.openUmp}</b><span>Open umpire spots</span></div>
       <div class="stat"><b>${status.counts.openDuty}</b><span>Open field duty shifts</span></div></div>
       ${status.counts.unpublished ? `<p class="small" style="margin-top:8px"><span class="badge warn">${status.counts.unpublished} draft events</span> <a href="#/admin/build">Review and publish</a></p>` : ''}` : ''}
+    ${dsum ? `<h2>Field duty at a glance</h2><a class="card" href="#/duty/overview" style="display:flex;gap:14px;flex-wrap:wrap;text-decoration:none;color:inherit;align-items:center">
+      <div><b style="font-family:var(--head);font-size:26px;color:var(--maroon)">${dsum.next7.filled}/${dsum.next7.total}</b> <span class="small muted">filled, next 7 days</span></div>
+      <div><b style="font-family:var(--head);font-size:26px;color:${dsum.open.filter(s => s.hoursLeft <= 168).length ? 'var(--bad)' : 'var(--ok)'}">${dsum.open.filter(s => s.hoursLeft <= 168).length}</b> <span class="small muted">open, next 7 days</span></div>
+      <div><b style="font-family:var(--head);font-size:26px;color:var(--maroon)">${dsum.next14.filled}/${dsum.next14.total}</b> <span class="small muted">filled, next 14 days</span></div>
+      <span class="btn ghost small" style="margin-left:auto">Open overview</span></a>` : ''}
     ${alerts.length ? `<h2>Needs your attention</h2>${alerts.join('')}` : ''}
     ${(() => { const d = duty.map(s => s.date).sort()[0]; return d ? `<h2>Field duty ${C.relDay(d) === 'Today' ? 'today' : C.relDay(d) === 'Tomorrow' ? 'tomorrow' : 'on ' + C.dShort(d)}</h2><div class="card" style="padding:8px 12px">${CS.dutyLine(duty, d)}</div>` : ''; })()}
     <h2>My next two weeks</h2>

@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 // ---------- migrations ----------
 const cols = t => db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
 if (!cols('teams').includes('season_id')) db.exec('ALTER TABLE teams ADD COLUMN season_id INTEGER');
+if (!cols('people').includes('is_duty_coord')) db.exec('ALTER TABLE people ADD COLUMN is_duty_coord INTEGER DEFAULT 0');
 if (!cols('teams').includes('removed')) db.exec('ALTER TABLE teams ADD COLUMN removed INTEGER DEFAULT 0');
 // New teams belong to the current season
 db.exec(`CREATE TRIGGER IF NOT EXISTS teams_season AFTER INSERT ON teams WHEN NEW.season_id IS NULL BEGIN
