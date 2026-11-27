@@ -5,6 +5,7 @@
 
   CS.S.pages.duty = async el => {
     const r = S.me.roles;
+    if (!r.board) { location.hash = '#/schedule'; return; }
     if (!week) week = C.mondayOf(C.today() < S.meta.settings.practice_start ? S.meta.settings.practice_start : C.today());
     const shifts = await C.get(`/api/duty?start=${week}&end=${C.addDays(week, 6)}`);
     const open = shifts.filter(s => s.people.length < s.needed).length;

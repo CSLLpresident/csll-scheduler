@@ -8,12 +8,10 @@ loadDefaults();
 if (process.env.DEMO_LIVE_DATES === 'true') {
   // Online demo: start practices this week and games in 3 weeks so every screen has something "today"
   const T0 = require('./time');
-  const { setSetting } = require('./db');
+  const { createSeason, activateSeason } = require('./db');
   const mon = T0.mondayOf(T0.today());
-  setSetting('practice_start', mon);
-  setSetting('tball_practice_start', mon);
-  setSetting('game_start', T0.addDays(mon, 21));
-  setSetting('season_name', 'Demo Season');
+  const id = createSeason('Demo', Number(mon.slice(0, 4)), { practice_start: mon, tball_practice_start: mon, game_start: T0.addDays(mon, 21), game_weeks: 8, makeup_weeks: 1, tournament_weeks: 1 });
+  activateSeason(id);
   run('DELETE FROM blackouts');
 }
 if (get('SELECT 1 FROM teams LIMIT 1') && !process.argv.includes('--force')) { console.log('Teams already exist; use --force to add demo data anyway.'); process.exit(0); }
@@ -50,6 +48,14 @@ tx(() => {
       for (const [wd, slot] of pick) run(`INSERT INTO availability(person_id,kind,weekday,slot_code,available) VALUES(?,?,?,?,1)`, head, 'coach', wd, slot);
     }
   }
+  // parents coaching two of their kids' teams (head on one, assistant on the other), plus practice coaches
+  const heads = all(`SELECT tc.person_id, t.id AS team_id, d.code FROM team_coaches tc JOIN teams t ON t.id=tc.team_id JOIN divisions d ON d.id=t.division_id WHERE tc.role='head'`);
+  const pairs = [['TB', 'JMAA'], ['JMAA', 'SMAA'], ['JMAAA', 'MAJ'], ['SMAAA', 'JR'], ['TB', 'SMAA']];
+  pairs.forEach(([a, b], i) => {
+    const from = heads.filter(h => h.code === a)[i + 2], to = heads.filter(h => h.code === b)[i + 3];
+    if (from && to) run(`INSERT OR IGNORE INTO team_coaches(team_id,person_id,role) VALUES(?,?,'assistant')`, to.team_id, from.person_id);
+  });
+  for (const t of all('SELECT id FROM teams').filter((_, i) => i % 4 === 0)) run(`INSERT INTO team_coaches(team_id,person_id,role) VALUES(?,?,'practice')`, t.id, person({ coach: true }));
   // umpires
   const umpDivs = all(`SELECT id, code FROM divisions WHERE code<>'TB' AND active=1`);
   for (let i = 0; i < 26; i++) {

@@ -114,12 +114,12 @@ window.CS = (function () {
       <div class="time">${t12s(e.start)}<small>${opts.showDate ? relDay(e.date) : 'to ' + t12s(e.end)}</small></div>
       <div class="main"><div class="title">${esc(eventTitle(e))}</div>
         <div class="meta">${esc(e.division_name || '')} · ${esc(e.park_short || '')} ${esc(e.field_name || '')}${opts.showUmps && e.umpires ? ' · ' + esc(e.umpires) : ''}</div></div>
-      <div class="side">${typeBadge(e)}${statusBadge(e)}${umps}</div></div>`;
+      <div class="side">${conflictBadge(e)}${typeBadge(e)}${statusBadge(e)}${umps}</div></div>`;
   }
-  function groupByDate(list, render) {
+  function groupByDate(list, render, extra) {
     let out = '', last = null;
     for (const x of list) {
-      if (x.date !== last) { out += `<div class="daygroup"><b>${dLong(x.date)}</b><span>${relDay(x.date) === dShort(x.date) ? '' : relDay(x.date)}</span></div>`; last = x.date; }
+      if (x.date !== last) { out += `<div class="daygroup"><b>${dLong(x.date)}</b><span>${relDay(x.date) === dShort(x.date) ? '' : relDay(x.date)}</span></div>${extra ? extra(x.date) : ''}`; last = x.date; }
       out += render(x);
     }
     return out;
@@ -138,9 +138,24 @@ window.CS = (function () {
   const personName = p => p ? `${p.first} ${p.last}` : '';
   const telLink = p => p ? `<a href="tel:${esc(p)}">${esc(p.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3'))}</a>` : '';
 
+  // Show coach-overlap warnings that came back from the server (they never block anything)
+  function showWarnings(r) {
+    const w = r && r.warnings;
+    if (!w || !w.length) return;
+    modal('Heads-up: coach on two teams', `<p class="small muted">This went through, but it overlaps for a coach with more than one team.</p>
+      ${w.map(x => `<div class="item"><div class="main"><div class="title"><span class="badge ${x.kind === 'overlap' ? 'bad' : 'warn'}">${x.kind === 'overlap' ? 'Same time' : 'Other park'}</span></div><div class="meta">${esc(x.text)}</div></div></div>`).join('')}
+      <button class="btn" data-close>OK</button>`);
+  }
+  function conflictBadge(e) {
+    const c = e.conflicts || [];
+    if (!c.length) return '';
+    const hard = c.some(x => x.kind === 'overlap');
+    return `<span class="badge ${hard ? 'bad' : 'warn'}" title="A coach on two teams">${hard ? 'Coach conflict' : 'Coach: 2 parks'}</span>`;
+  }
+
   function download(url) { const a = document.createElement('a'); a.href = url; a.download = ''; document.body.appendChild(a); a.click(); a.remove(); }
 
   return { S, api, get, post, put, patch, del, esc, pad, toDate, ymd, addDays, today, mondayOf, DOW, DOWL, MON, t12, t12s, dShort, dLong, dtShort, relDay, money,
     toast, fail, act, modal, confirmBox, icon, eventTitle, eventItem, typeBadge, statusBadge, groupByDate, weekNav, divisionOptions, teamOptions, parkOptions,
-    fieldName, personName, telLink, download };
+    fieldName, personName, telLink, download, showWarnings, conflictBadge };
 })();

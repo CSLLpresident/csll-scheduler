@@ -7,11 +7,10 @@
     const r = S.me.roles;
     const items = [
       { hash: 'home', label: 'Home', icon: 'home', show: true, bottom: true },
-      { hash: 'practices', label: 'Practice Schedule', icon: 'bat', show: true, bottom: true },
-      { hash: 'schedule', label: 'Game Schedule', icon: 'cal', show: true, bottom: true },
+      { hash: 'schedule', label: 'Schedule', icon: 'cal', show: true, bottom: true },
       { hash: 'umpires', label: 'Umpires', icon: 'whistle', show: r.umpire || r.board, bottom: r.umpire && !r.coach },
-      { hash: 'duty', label: 'Field Duty', icon: 'key', show: true, bottom: r.board },
-      { hash: 'availability', label: 'Availability', icon: 'check', show: r.coach || r.umpire || r.board, bottom: false },
+      { hash: 'duty', label: 'Field Duty', icon: 'key', show: r.board, bottom: r.board },
+      { hash: 'availability', label: 'Availability', icon: 'check', show: r.teamScheduler || r.umpire || r.board, bottom: !r.board || !r.umpire },
       { hash: 'admin', label: 'Admin', icon: 'gear', show: r.admin || r.scheduler, bottom: false },
       { hash: 'me', label: 'My account', icon: 'user', show: true, bottom: false },
     ];
@@ -123,7 +122,7 @@
         <div class="card"><h3>Add my schedule to my calendar</h3><p class="small muted">Your teams' games and practices, umpire games and field duty. Paste this link into Google, Apple or Outlook calendar as a subscription.</p>
           <input type="text" readonly value="${esc(calUrl)}" onclick="this.select()"><div class="btnrow" style="margin-top:8px"><button class="btn ghost small" id="copy">Copy link</button>
           <a class="btn ghost small" href="${esc(calUrl.replace(/^https?/, 'webcal'))}">Open in calendar app</a></div></div>
-        ${r.coachTeams.length ? `<div class="card"><h3>My teams</h3>${r.coachTeams.map(t => `<div class="item"><div class="main"><div class="title">${esc(t.name)}</div><div class="meta">${esc(t.division_name)} · ${t.role === 'head' ? 'Head coach' : 'Assistant coach'}</div></div>
+        ${r.coachTeams.length ? `<div class="card"><h3>My teams</h3>${r.coachTeams.map(t => `<div class="item"><div class="main"><div class="title">${esc(t.name)}</div><div class="meta">${esc(t.division_name)} · ${t.role === 'head' ? 'Head coach' : t.role === 'practice' ? 'Practice coach' : 'Assistant coach'}</div></div>
           <button class="btn ghost small" data-cal="${t.id}">Team calendar link</button></div>`).join('')}</div>` : ''}
       </div>
       <div class="btnrow" style="margin-top:16px"><button class="btn ghost" id="logout">Log out</button></div>`;

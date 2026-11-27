@@ -86,11 +86,14 @@ function rolesOf(p) {
     admin: !!p.is_admin,
     board: !!(p.is_board || p.is_admin),
     coach: coachTeams.length > 0 || !!p.is_coach,
+    // head and assistant coaches schedule for their teams; practice coaches only view
+    teamScheduler: coachTeams.some(t => t.role !== 'practice'),
     umpire: !!p.is_umpire,
     umpCoord: !!(p.is_ump_coord || p.is_admin),
     president: !!p.is_president,
     scheduler: !!(p.is_admin || p.can_edit_schedule),
     coachTeams,
+    manageTeams: coachTeams.filter(t => t.role !== 'practice'),
   };
 }
 

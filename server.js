@@ -16,6 +16,8 @@ const X = require('./exports');
 const I = require('./imports');
 const { slotGroup } = require('./engine-slots');
 const jobs = require('./jobs');
+const CF = require('./engine-conflicts');
+const { currentSeason, activateSeason, createSeason } = require('./db');
 
 loadDefaults();
 bootstrapAdmin();
@@ -98,6 +100,7 @@ app.get('/api/meta', need(), wrap(async req => {
     fields, teams,
     settings: Object.fromEntries(keys.map(k => [k, setting(k)])),
     seasonEnd: R.seasonEnd(),
+    season: currentSeason(),
     today: T.today(),
   };
 }));
@@ -118,7 +121,7 @@ function eventQuery(q, person, roles) {
   }
   if (!roles.scheduler) where.push('e.published = 1');
   if (q.status !== 'all') where.push("e.status <> 'cancelled'");
-  return all(`SELECT e.*, d.name AS division_name, d.code AS division_code, d.color AS division_color, f.name AS field_name, f.park_id, pk.short AS park_short,
+  const rows = all(`SELECT e.*, d.name AS division_name, d.code AS division_code, d.color AS division_color, f.name AS field_name, f.park_id, pk.short AS park_short,
                 th.name AS home_name, ta.name AS away_name, tt.name AS team_name,
                 (SELECT COUNT(*) FROM ump_assignments a WHERE a.event_id=e.id AND a.status<>'sick') AS ump_slots,
                 (SELECT COUNT(*) FROM ump_assignments a WHERE a.event_id=e.id AND a.status<>'sick' AND a.person_id IS NOT NULL) AS ump_filled,
@@ -126,7 +129,12 @@ function eventQuery(q, person, roles) {
                   WHERE a.event_id=e.id AND a.status IN ('assigned','present')) AS umpires
               FROM events e LEFT JOIN divisions d ON d.id=e.division_id LEFT JOIN fields f ON f.id=e.field_id LEFT JOIN parks pk ON pk.id=f.park_id
               LEFT JOIN teams th ON th.id=e.home_team_id LEFT JOIN teams ta ON ta.id=e.away_team_id LEFT JOIN teams tt ON tt.id=e.team_id
-              WHERE ${where.join(' AND ')} ORDER BY e.date, e.start, pk.sort, f.sort LIMIT 5000`, ...p);
+              WHERE ${where.join(' AND ')} ORDER BY e.date, e.start, pk.sort, f.sort LIMIT 5000`, ...p).map(e => ({ ...e }));
+  if (q.start && q.end && rows.length) {
+    const cmap = CF.conflictsByEvent(q.start, q.end);
+    for (const e of rows) e.conflicts = cmap.get(e.id) || [];
+  }
+  return rows;
 }
 app.get('/api/events', need(), wrap(async req => eventQuery(req.query, req.person, req.roles)));
 
@@ -140,7 +148,8 @@ app.post('/api/events', need(isSched), wrap(async req => {
                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'manual',?)`, b.type || 'practice', b.date, b.fieldId, b.slotCode || null, start, end,
     b.divisionId || null, b.homeTeamId || null, b.awayTeamId || null, b.teamId || null, b.title || null, b.notes || null, b.published === false ? 0 : 1);
   audit(req.person.id, 'event.create', b);
-  return { id: r.lastInsertRowid };
+  const warnings = CF.checkPlacement({ teamIds: [b.teamId, b.homeTeamId, b.awayTeamId], date: b.date, start, end, fieldId: b.fieldId, excludeIds: [Number(r.lastInsertRowid)] });
+  return { id: r.lastInsertRowid, warnings };
 }));
 
 app.patch('/api/events/:id', need(isSched), wrap(async req => {
@@ -159,6 +168,7 @@ app.patch('/api/events/:id', need(isSched), wrap(async req => {
   run(`UPDATE events SET type=?, date=?, field_id=?, slot_code=?, start=?, end=?, status=?, notes=?, title=?, home_team_id=?, away_team_id=?, team_id=?, division_id=?, published=?, updated_at=datetime('now') WHERE id=?`,
     next.type, next.date, next.field_id, next.slot_code, next.start, next.end, next.status, next.notes, next.title, next.home_team_id, next.away_team_id, next.team_id, next.division_id, next.published, e.id);
   audit(req.person.id, 'event.update', { id: e.id, ...b });
+  const warnings = next.status === 'scheduled' ? CF.checkPlacement({ teamIds: [next.team_id, next.home_team_id, next.away_team_id], date: next.date, start: next.start, end: next.end, fieldId: next.field_id, excludeIds: [e.id] }) : [];
   // tell affected coaches and umpires when a published event moves or is cancelled
   const moved = next.date !== e.date || next.field_id !== e.field_id || next.start !== e.start;
   const statusChanged = next.status !== e.status;
@@ -168,7 +178,7 @@ app.patch('/api/events/:id', need(isSched), wrap(async req => {
     const what = statusChanged && next.status !== 'scheduled' ? `${next.status === 'rainout' ? 'Rained out' : 'Cancelled'}: ` : 'Moved: ';
     notifyLater(people, { title: 'Schedule change', body: `${what}${R.describe(e.date, e.field_id, e.start)}${moved ? ' -> ' + R.describe(next.date, next.field_id, next.start) : ''}` });
   }
-  return { ok: true };
+  return { ok: true, warnings };
 }));
 app.delete('/api/events/:id', need(isSched), wrap(async req => { run('DELETE FROM events WHERE id=?', req.params.id); audit(req.person.id, 'event.delete', req.params.id); return { ok: true }; }));
 app.get('/api/events/:id/makeup', need(isSched), wrap(async req => makeupOptions(Number(req.params.id))));
@@ -233,7 +243,12 @@ app.get('/api/practice/requests', need(), wrap(async req => {
                        WHERE r.status<>'pending' AND r.team_id IN (${(teamId ? [teamId] : mineTeams).join(',') || 0}) ORDER BY r.decided_at DESC LIMIT 30`);
   return { pending: list, history };
 }));
-app.post('/api/practice/requests', need(), wrap(async req => R.requestPractice(req.person, Number(req.body.teamId), req.body.date, Number(req.body.fieldId), req.body.slotCode)));
+app.post('/api/practice/requests', need(), wrap(async req => {
+  const r = R.requestPractice(req.person, Number(req.body.teamId), req.body.date, Number(req.body.fieldId), req.body.slotCode);
+  const slot = get('SELECT * FROM field_slots WHERE field_id=? AND code=?', Number(req.body.fieldId), req.body.slotCode);
+  r.warnings = CF.checkPlacement({ teamIds: [Number(req.body.teamId)], date: req.body.date, start: slot.start, end: slot.end, fieldId: Number(req.body.fieldId), excludeIds: r.eventId ? [r.eventId] : [] });
+  return r;
+}));
 app.delete('/api/practice/requests/:id', need(), wrap(async req => { R.cancelRequest(req.person, Number(req.params.id)); return { ok: true }; }));
 app.post('/api/practice/requests/reorder', need(), wrap(async req => { R.reorderRequests(req.person, Number(req.body.teamId), req.body.ids); return { ok: true }; }));
 app.get('/api/priority', need(), wrap(async req => all(`SELECT t.id, t.name, t.priority_rank, d.code AS division_code,
@@ -255,9 +270,72 @@ app.get('/api/swaps', need(), wrap(async req => {
     WHERE s.kind IN ('practice','scrimmage') AND (s.from_team IN (${ids}) OR s.to_team IN (${ids})) ORDER BY s.id DESC LIMIT 50`)
     .map(s => ({ ...s, incoming: mine.includes(s.to_team) }));
 }));
-app.post('/api/swaps/practice', need(), wrap(async req => ({ id: R.proposePracticeSwap(req.person, Number(req.body.eventA), Number(req.body.eventB), req.body.message) })));
-app.post('/api/swaps/scrimmage', need(), wrap(async req => ({ id: R.inviteScrimmage(req.person, Number(req.body.eventA), Number(req.body.toTeam), req.body.message) })));
-app.post('/api/swaps/:id/respond', need(), wrap(async req => ({ result: R.respondSwap(req.person, Number(req.params.id), !!req.body.accept) })));
+// warnings for what a swap or scrimmage would do to coaches on more than one team
+function swapWarnings(kind, eventA, eventB, toTeam) {
+  const a = get('SELECT * FROM events WHERE id=?', eventA), b = eventB ? get('SELECT * FROM events WHERE id=?', eventB) : null;
+  if (!a) return [];
+  if (kind === 'practice' && b) return [
+    ...CF.checkPlacement({ teamIds: [a.team_id], date: b.date, start: b.start, end: b.end, fieldId: b.field_id, excludeIds: [a.id, b.id] }),
+    ...CF.checkPlacement({ teamIds: [b.team_id], date: a.date, start: a.start, end: a.end, fieldId: a.field_id, excludeIds: [a.id, b.id] })];
+  return CF.checkPlacement({ teamIds: [toTeam], date: a.date, start: a.start, end: a.end, fieldId: a.field_id, excludeIds: [a.id] });
+}
+app.post('/api/swaps/practice', need(), wrap(async req => ({ id: R.proposePracticeSwap(req.person, Number(req.body.eventA), Number(req.body.eventB), req.body.message),
+  warnings: swapWarnings('practice', Number(req.body.eventA), Number(req.body.eventB)) })));
+app.post('/api/swaps/scrimmage', need(), wrap(async req => ({ id: R.inviteScrimmage(req.person, Number(req.body.eventA), Number(req.body.toTeam), req.body.message),
+  warnings: swapWarnings('scrimmage', Number(req.body.eventA), null, Number(req.body.toTeam)) })));
+app.post('/api/swaps/:id/respond', need(), wrap(async req => {
+  const s0 = get('SELECT * FROM swaps WHERE id=?', req.params.id);
+  const warnings = s0 && req.body.accept ? swapWarnings(s0.kind, s0.event_a, s0.event_b, s0.to_team) : [];
+  return { result: R.respondSwap(req.person, Number(req.params.id), !!req.body.accept), warnings };
+}));
+
+// ---------- coaches on more than one team ----------
+app.get('/api/conflicts', need(r => r.board || r.scheduler), wrap(async req => {
+  const start = req.query.start || setting('practice_start'), end = req.query.end || R.seasonEnd();
+  return { coaches: CF.multiTeamCoaches(), conflicts: CF.findConflicts(start, end), start, end };
+}));
+app.post('/api/conflicts/ack', need(r => r.board || r.scheduler), wrap(async req => { CF.acknowledge(req.body.key, req.person.id, req.body.note); audit(req.person.id, 'conflict.ok', req.body); return { ok: true }; }));
+app.post('/api/conflicts/unack', need(r => r.board || r.scheduler), wrap(async req => { CF.unacknowledge(req.body.key); return { ok: true }; }));
+
+// ---------- seasons ----------
+app.get('/api/seasons', need(), wrap(async () => {
+  const cur = currentSeason();
+  return all('SELECT s.*, (SELECT COUNT(*) FROM teams t WHERE t.season_id=s.id AND COALESCE(t.removed,0)=0) AS teams FROM seasons s ORDER BY year DESC, id DESC')
+    .map(s => ({ ...s, settings: JSON.parse(s.settings || '{}'), name: `${s.kind} ${s.year}`, current: cur && cur.id === s.id }));
+}));
+app.post('/api/seasons', need(isAdmin), wrap(async req => {
+  const b = req.body;
+  if (!['Spring', 'Fall', 'All-Stars', 'Demo'].includes(b.kind)) throw new Error('Pick Spring, Fall, All-Stars or Demo.');
+  const year = Number(b.year); if (!(year > 2000 && year < 2100)) throw new Error('Enter a year like 2027.');
+  if (get('SELECT 1 FROM seasons WHERE kind=? AND year=?', b.kind, year)) throw new Error(`${b.kind} ${year} already exists.`);
+  const cur = currentSeason();
+  const settings = { practice_start: b.practice_start, tball_practice_start: b.tball_practice_start || b.practice_start, game_start: b.game_start,
+    game_weeks: Number(b.game_weeks) || cur?.settings.game_weeks || 8, makeup_weeks: Number(b.makeup_weeks ?? cur?.settings.makeup_weeks ?? 1), tournament_weeks: Number(b.tournament_weeks ?? cur?.settings.tournament_weeks ?? 1) };
+  if (!settings.practice_start || !settings.game_start) throw new Error('Practice start and game start dates are required.');
+  const id = createSeason(b.kind, year, settings);
+  if (b.copyTeamsFrom) {
+    tx(() => {
+      for (const t of all('SELECT * FROM teams WHERE season_id=? AND COALESCE(removed,0)=0', Number(b.copyTeamsFrom))) {
+        const nid = run('INSERT INTO teams(division_id,name,season_id,active) VALUES(?,?,?,0)', t.division_id, t.name, id).lastInsertRowid;
+        if (b.copyCoaches) for (const c of all('SELECT * FROM team_coaches WHERE team_id=?', t.id)) run('INSERT INTO team_coaches(team_id,person_id,role) VALUES(?,?,?)', nid, c.person_id, c.role);
+      }
+    });
+  }
+  if (b.activate) { activateSeason(id); R.renumberRanks(); }
+  audit(req.person.id, 'season.create', { id, kind: b.kind, year });
+  return { id };
+}));
+app.post('/api/seasons/:id/activate', need(isAdmin), wrap(async req => {
+  if (!get('SELECT 1 FROM seasons WHERE id=?', req.params.id)) throw new Error('Season not found.');
+  activateSeason(Number(req.params.id)); R.renumberRanks(); audit(req.person.id, 'season.activate', req.params.id);
+  return { ok: true };
+}));
+app.patch('/api/seasons/:id', need(isAdmin), wrap(async req => {
+  const b = req.body;
+  if (b.kind) run('UPDATE seasons SET kind=? WHERE id=?', b.kind, req.params.id);
+  if (b.year) run('UPDATE seasons SET year=? WHERE id=?', Number(b.year), req.params.id);
+  return { ok: true };
+}));
 
 // ---------- field duty ----------
 app.get('/api/duty', need(), wrap(async req => {
@@ -413,7 +491,7 @@ app.put('/api/pay-rates', need(isAdmin), wrap(async req => {
 app.get('/api/payroll', need(isBoard), wrap(async req => X.payrollRows(req.query.start, req.query.end)));
 
 // ---------- people & teams (admin) ----------
-app.get('/api/people', need(isBoard), wrap(async () => all(`SELECT p.*, (SELECT GROUP_CONCAT(t.name || ' (' || tc.role || ')', ', ') FROM team_coaches tc JOIN teams t ON t.id=tc.team_id WHERE tc.person_id=p.id) AS teams FROM people p ORDER BY active DESC, last, first`)));
+app.get('/api/people', need(isBoard), wrap(async () => all(`SELECT p.*, (SELECT GROUP_CONCAT(t.name || ' (' || tc.role || ')', ', ') FROM team_coaches tc JOIN teams t ON t.id=tc.team_id WHERE tc.person_id=p.id AND t.active=1) AS teams FROM people p ORDER BY active DESC, last, first`)));
 app.get('/api/directory', need(), wrap(async () => all(`SELECT id, first, last, phone, email, is_board, is_umpire, is_ump_coord, is_president FROM people WHERE active=1 AND (is_board=1 OR is_admin=1 OR is_ump_coord=1) ORDER BY last, first`)));
 const personCols = ['first', 'last', 'email', 'phone', 'is_admin', 'is_board', 'is_coach', 'is_umpire', 'is_ump_coord', 'is_president', 'can_edit_schedule', 'active'];
 app.post('/api/people', need(isAdmin), wrap(async req => {
@@ -431,7 +509,7 @@ app.patch('/api/people/:id', need(isAdmin), wrap(async req => {
   if (sets.length) run(`UPDATE people SET ${sets.join(',')} WHERE id=?`, ...p, req.params.id);
   return { ok: true };
 }));
-app.get('/api/teams', need(), wrap(async () => all(`SELECT t.*, d.name AS division_name, d.code AS division_code FROM teams t JOIN divisions d ON d.id=t.division_id ORDER BY d.sort, t.name`)));
+app.get('/api/teams', need(), wrap(async () => all(`SELECT t.*, d.name AS division_name, d.code AS division_code FROM teams t JOIN divisions d ON d.id=t.division_id WHERE t.season_id=? AND COALESCE(t.removed,0)=0 ORDER BY d.sort, t.name`, currentSeason()?.id || 0)));
 app.post('/api/teams', need(isAdmin), wrap(async req => {
   const r = run('INSERT INTO teams(division_id,name) VALUES(?,?)', req.body.divisionId, req.body.name);
   R.renumberRanks();
@@ -439,7 +517,8 @@ app.post('/api/teams', need(isAdmin), wrap(async req => {
 }));
 app.patch('/api/teams/:id', need(isAdmin), wrap(async req => {
   const b = req.body;
-  run('UPDATE teams SET name=COALESCE(?,name), division_id=COALESCE(?,division_id), active=COALESCE(?,active) WHERE id=?', b.name ?? null, b.divisionId ?? null, b.active == null ? null : +!!b.active, req.params.id);
+  run('UPDATE teams SET name=COALESCE(?,name), division_id=COALESCE(?,division_id), active=COALESCE(?,active), removed=COALESCE(?,removed) WHERE id=?',
+    b.name ?? null, b.divisionId ?? null, b.active == null ? null : +!!b.active, b.active == null ? null : +!b.active, req.params.id);
   return { ok: true };
 }));
 app.put('/api/teams/:id/coaches', need(isAdmin), wrap(async req => {

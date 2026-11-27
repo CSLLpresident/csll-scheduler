@@ -121,10 +121,24 @@ CREATE TABLE IF NOT EXISTS login_codes (
   id INTEGER PRIMARY KEY, person_id INTEGER, code_hash TEXT, expires_at INTEGER, attempts INTEGER DEFAULT 0, used INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, person_id INTEGER, expires_at INTEGER);
+CREATE TABLE IF NOT EXISTS seasons (
+  id INTEGER PRIMARY KEY, kind TEXT, year INTEGER, settings TEXT DEFAULT '{}', created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS conflict_acks (
+  key TEXT PRIMARY KEY, person_id INTEGER, note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY, person_id INTEGER, action TEXT, detail TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 `);
+
+// ---------- migrations ----------
+const cols = t => db.prepare(`PRAGMA table_info(${t})`).all().map(c => c.name);
+if (!cols('teams').includes('season_id')) db.exec('ALTER TABLE teams ADD COLUMN season_id INTEGER');
+if (!cols('teams').includes('removed')) db.exec('ALTER TABLE teams ADD COLUMN removed INTEGER DEFAULT 0');
+// New teams belong to the current season
+db.exec(`CREATE TRIGGER IF NOT EXISTS teams_season AFTER INSERT ON teams WHEN NEW.season_id IS NULL BEGIN
+  UPDATE teams SET season_id = (SELECT CAST(value AS INTEGER) FROM settings WHERE key='current_season_id') WHERE id = NEW.id; END;`);
 
 // ---------- helpers ----------
 const all = (sql, ...p) => db.prepare(sql).all(...p);
@@ -135,16 +149,50 @@ function tx(fn) {
   try { const r = fn(); db.exec('COMMIT'); return r; }
   catch (e) { db.exec('ROLLBACK'); throw e; }
 }
-function setting(key, fallback = null) {
-  const r = get('SELECT value FROM settings WHERE key=?', key);
-  if (!r) return fallback;
+// Season-specific settings live on the current season; everything else is league-wide.
+const SEASON_KEYS = new Set(['practice_start', 'tball_practice_start', 'game_start', 'game_weeks', 'makeup_weeks', 'tournament_weeks']);
+function rawSetting(key) {
+  const r = db.prepare('SELECT value FROM settings WHERE key=?').get(key);
+  if (!r) return null;
   try { return JSON.parse(r.value); } catch { return r.value; }
 }
+function rawSetSetting(key, value) {
+  db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, JSON.stringify(value));
+}
+function currentSeason() {
+  const id = rawSetting('current_season_id');
+  const s = id ? db.prepare('SELECT * FROM seasons WHERE id=?').get(id) : null;
+  if (!s) return null;
+  return { ...s, settings: JSON.parse(s.settings || '{}'), name: `${s.kind} ${s.year}` };
+}
+function setting(key, fallback = null) {
+  const season = currentSeason();
+  if (key === 'season_name') return season ? season.name : (rawSetting(key) ?? fallback);
+  if (season && SEASON_KEYS.has(key)) return season.settings[key] ?? rawSetting(key) ?? fallback;
+  const v = rawSetting(key);
+  return v === null ? fallback : v;
+}
 function setSetting(key, value) {
-  run('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, JSON.stringify(value));
+  const season = currentSeason();
+  if (season && SEASON_KEYS.has(key)) {
+    season.settings[key] = value;
+    db.prepare('UPDATE seasons SET settings=? WHERE id=?').run(JSON.stringify(season.settings), season.id);
+    return;
+  }
+  if (key === 'season_name' && season) return;
+  rawSetSetting(key, value);
+}
+/** Make a season current. Teams from other seasons are hidden (kept, not deleted). */
+function activateSeason(id) {
+  rawSetSetting('current_season_id', id);
+  db.prepare('UPDATE teams SET active = CASE WHEN season_id=? AND COALESCE(removed,0)=0 THEN 1 ELSE 0 END').run(id);
+}
+function createSeason(kind, year, settings = {}) {
+  const r = db.prepare('INSERT INTO seasons(kind,year,settings) VALUES(?,?,?)').run(kind, year, JSON.stringify(settings));
+  return Number(r.lastInsertRowid);
 }
 function audit(personId, action, detail) {
   run('INSERT INTO audit_log(person_id,action,detail) VALUES(?,?,?)', personId || null, action, typeof detail === 'string' ? detail : JSON.stringify(detail || {}));
 }
 
-module.exports = { db, all, get, run, tx, setting, setSetting, audit, DB_PATH };
+module.exports = { db, all, get, run, tx, setting, setSetting, audit, DB_PATH, currentSeason, activateSeason, createSeason, SEASON_KEYS };

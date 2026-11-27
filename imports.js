@@ -26,6 +26,8 @@ function parseCsv(text) {
 
 // find a column by any of several possible header names
 const pick = (row, ...names) => { for (const n of names) for (const k of Object.keys(row)) if (k === n || k.includes(n)) { if (row[k]) return row[k]; } return ''; };
+// "Head Coach"/"Manager" -> head, "Assistant Coach" -> assistant, "Practice Coach" -> practice (views only)
+const coachRoleOf = v => /practice/i.test(v || '') ? 'practice' : /assist/i.test(v || '') ? 'assistant' : 'head';
 const yes = v => /^(y|yes|true|1|x)$/i.test(String(v || '').trim());
 
 function matchPerson(email, phone, first, last) {
@@ -71,7 +73,7 @@ function previewPeople(text) {
       is_president: /president/.test(rolesText),
     };
     const existing = matchPerson(email, phone, first, last);
-    out.push({ first, last, email, phone, roles, team: pick(r, 'team'), division: pick(r, 'division'), coachRole: /assist/i.test(pick(r, 'coach role', 'volunteer role')) ? 'assistant' : 'head',
+    out.push({ first, last, email, phone, roles, team: pick(r, 'team'), division: pick(r, 'division'), coachRole: coachRoleOf(pick(r, 'coach role', 'volunteer role', 'team role')),
       umpDivs: pick(r, 'umpire divisions', 'ump divisions'), action: existing ? 'update' : 'add', existingId: existing?.id || null });
   }
   return out;
@@ -100,7 +102,7 @@ function applyPeople(text) {
       }
       if (r.team) {
         const div = divisionFromText(r.division);
-        let team = get('SELECT * FROM teams WHERE lower(name)=lower(?)' + (div ? ' AND division_id=?' : ''), ...(div ? [r.team, div.id] : [r.team]));
+        let team = get('SELECT * FROM teams WHERE active=1 AND lower(name)=lower(?)' + (div ? ' AND division_id=?' : ''), ...(div ? [r.team, div.id] : [r.team]));
         if (!team && div) team = { id: run('INSERT INTO teams(division_id,name) VALUES(?,?)', div.id, r.team).lastInsertRowid };
         if (team) run('INSERT OR REPLACE INTO team_coaches(team_id,person_id,role) VALUES(?,?,?)', team.id, id, r.coachRole);
       }
@@ -130,14 +132,14 @@ function previewSportsConnect(text) {
     const last = pick(r, 'volunteer last name', 'coach last name', 'last name');
     if (first || last) {
       const role = pick(r, 'volunteer role', 'role', 'position').toLowerCase();
-      if (role && !/coach|manager/.test(role)) continue;
+      if (role && !/coach|manager/.test(role)) continue; // team parents, scorekeepers etc. stay out
       t.coaches.push({ first, last, email: pick(r, 'volunteer email', 'email').toLowerCase(), phone: normalizePhone(pick(r, 'volunteer cell', 'cell', 'phone')),
-        role: /assist/.test(role) ? 'assistant' : 'head' });
+        role: coachRoleOf(role) });
     }
   }
   const changes = [];
   for (const t of teams.values()) {
-    const existing = t.division ? get('SELECT * FROM teams WHERE lower(name)=lower(?) AND division_id=?', t.teamName, t.division.id) : null;
+    const existing = t.division ? get('SELECT * FROM teams WHERE active=1 AND lower(name)=lower(?) AND division_id=?', t.teamName, t.division.id) : null;
     const entry = { team: t.teamName, division: t.division?.name || `Unknown: ${t.divText}`, divisionId: t.division?.id || null, teamAction: existing ? 'keep' : 'add', teamId: existing?.id || null, coaches: [] };
     for (const c of t.coaches) {
       const p = matchPerson(c.email, c.phone, c.first, c.last);

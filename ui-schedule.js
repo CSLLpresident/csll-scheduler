@@ -1,70 +1,86 @@
-// Game Schedule and Practice Schedule: everyone sees every game, practice and scrimmage. Schedulers can edit, move, rain out and add.
+// Schedule: one page for practices, scrimmages and games, with a Practices / Games / Both toggle.
+// Everyone sees every event. Schedulers can edit, move, rain out and add. Field duty shows under each day.
 (function () {
   const C = CS, { S, esc } = C;
-  const fresh = () => ({ week: null, division: '', team: '', park: '', type: '', mine: false, view: 'list', day: null });
-  const states = { game: fresh(), practice: fresh() };
-  let st = states.game;
-  let mode = 'game';
+  const st = { week: null, division: '', team: '', park: '', mine: false, view: 'list', day: null, show: 'both' };
+  let mode = 'both';
 
-  const MODES = {
-    game: { title: 'Game Schedule', sub: 'Every game in the league. Coaches can see each other\'s times to work out conflicts.', types: 'game', start: () => S.meta.settings.game_start, empty: 'No games this week with these filters.' },
-    practice: { title: 'Practice Schedule', sub: 'Every practice and scrimmage. Practices start before games, so this is the first schedule of the season.', types: 'practice,scrimmage', start: () => S.meta.settings.practice_start, empty: 'No practices this week with these filters.' },
+  const SHOW = {
+    practices: { label: 'Practices', types: 'practice,scrimmage', empty: 'No practices this week with these filters.' },
+    games: { label: 'Games', types: 'game', empty: 'No games this week with these filters.' },
+    both: { label: 'Both', types: 'game,practice,scrimmage', empty: 'Nothing scheduled this week with these filters.' },
   };
 
-  // Renders a schedule for one mode into el. opts.embedded = inside another page (no page title).
+  // One line per day: who's on field duty at each park (so coaches know who to call)
+  function dutyLine(shifts, date) {
+    const day = shifts.filter(s => s.date === date);
+    if (!day.length) return '';
+    const parks = [...new Set(day.map(s => s.park_short))];
+    return `<div class="dutyline">${C.icon('key')}<span><b>Field duty</b> ${parks.map(p => {
+      const list = day.filter(s => s.park_short === p).sort((a, b) => a.shift.localeCompare(b.shift));
+      if (!list.some(s => s.people.length)) return `<span class="dpark">${esc(p)}: <span class="muted">not assigned yet</span></span>`;
+      const parts = list.map(s => `${s.shift}: ${s.people.length ? s.people.map(x => `${esc(x.first)} ${esc(x.last)} ${C.telLink(x.phone)}`).join(', ') : '<span class="muted">open</span>'}`);
+      return `<span class="dpark">${esc(p)}: ${parts.join(' · ')}</span>`;
+    }).join('')}</span></div>`;
+  }
+
+  // Renders the schedule into el. opts.embedded = inside another page (no page title).
   async function renderSchedule(el, m, opts = {}) {
-    mode = m; st = states[m];
-    const cfg = MODES[m];
+    if (m) st.show = m;
+    mode = st.show;
+    const cfg = SHOW[st.show];
     const r = S.me.roles;
     if (!st.week) {
-      const t = C.today(), first = cfg.start();
+      const t = C.today(), first = S.meta.settings.practice_start;
       st.week = C.mondayOf(t < first ? first : t);
       st.mine = r.coachTeams.length > 0 && !r.scheduler;
     }
     if (!st.day || st.day < st.week || st.day > C.addDays(st.week, 6)) st.day = st.week;
-    const q = new URLSearchParams({ start: st.week, end: C.addDays(st.week, 6), type: st.type || cfg.types });
+    const end = C.addDays(st.week, 6);
+    const q = new URLSearchParams({ start: st.week, end, type: cfg.types });
     if (st.division) q.set('division', st.division);
     if (st.team) q.set('team', st.team);
     if (st.park) q.set('park', st.park);
     if (st.mine) q.set('mine', '1');
     if (r.scheduler) q.set('status', 'all');
-    const events = await C.get('/api/events?' + q);
+    const [events, shifts] = await Promise.all([C.get('/api/events?' + q), C.get(`/api/duty?start=${st.week}&end=${end}`)]);
 
     const exportQ = new URLSearchParams({ type: cfg.types }); if (st.division) exportQ.set('division', st.division); if (st.team) exportQ.set('team', st.team);
-    const buttons = `<div class="btnrow">${r.scheduler ? `<button class="btn" id="add">Add ${m === 'game' ? 'game' : 'practice'}</button>` : ''}
-          <a class="btn ghost" href="/export/schedule.csv?${exportQ}">${C.icon('down')} CSV</a></div>`;
     el.innerHTML = `
-      ${opts.embedded ? `<div class="pagehead" style="margin-bottom:8px"><div></div>${buttons}</div>` : `<div class="pagehead"><div><h1>${cfg.title}</h1><div class="sub">${cfg.sub}</div></div>${buttons}</div>`}
-      ${C.weekNav('wk', st.week)}
-      <div class="filters" style="margin-top:10px">
+      <div class="toolbar">
+        <div class="seg" role="group" aria-label="Show">${Object.entries(SHOW).map(([k, v]) => `<button data-show="${k}" class="${st.show === k ? 'on' : ''}">${v.label}</button>`).join('')}</div>
+        ${C.weekNav('wk', st.week)}
+      </div>
+      <div class="filters">
         <select id="fdiv" aria-label="Division">${C.divisionOptions(st.division)}</select>
         <select id="fteam" aria-label="Team">${C.teamOptions(st.team, st.division)}</select>
         <select id="fpark" aria-label="Park">${C.parkOptions(st.park)}</select>
-        ${m === 'practice' ? `<select id="ftype" aria-label="Type"><option value="">Practices and scrimmages</option>
-          ${['practice', 'scrimmage'].map(t => `<option value="${t}" ${st.type === t ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}s only</option>`).join('')}</select>` : ''}
-        ${r.coachTeams.length ? `<label class="check"><input type="checkbox" id="fmine" ${st.mine ? 'checked' : ''}> My teams only</label>` : ''}
+        ${r.coachTeams.length ? `<label class="check"><input type="checkbox" id="fmine" ${st.mine ? 'checked' : ''}> My teams</label>` : ''}
+        <div class="seg small" role="group" aria-label="View"><button data-view="list" class="${st.view === 'list' ? 'on' : ''}">List</button><button data-view="grid" class="${st.view === 'grid' ? 'on' : ''}">Fields by day</button></div>
+        <div class="btnrow" style="margin-left:auto">${r.scheduler ? '<button class="btn small" id="add">Add event</button>' : ''}
+          <a class="btn ghost small" href="/export/schedule.csv?${exportQ}" aria-label="Download CSV">${C.icon('down')} CSV</a></div>
       </div>
-      <div class="tabs" role="tablist"><button data-view="list" class="${st.view === 'list' ? 'on' : ''}">List</button><button data-view="grid" class="${st.view === 'grid' ? 'on' : ''}">Fields by day</button></div>
       <div id="out"></div>`;
 
     const out = el.querySelector('#out');
     if (st.view === 'list') {
-      out.innerHTML = events.length ? C.groupByDate(events, e => C.eventItem(e, { click: true, showUmps: r.board || r.umpire })) : `<div class="empty">${cfg.empty}</div>`;
+      out.innerHTML = events.length ? C.groupByDate(events, e => C.eventItem(e, { click: true, showUmps: r.board || r.umpire }), d => dutyLine(shifts, d)) : `<div class="empty">${cfg.empty}</div>`;
     } else {
-      out.innerHTML = dayGrid(events);
+      out.innerHTML = dayGrid(events) + dutyLine(shifts, st.day);
     }
 
     // handlers
-    const rerender = () => renderSchedule(el, m, opts).catch(C.fail);
+    const rerender = () => renderSchedule(el, null, opts).catch(C.fail);
+    el.querySelectorAll('[data-show]').forEach(b => b.onclick = () => { st.show = b.dataset.show; rerender(); });
     el.querySelector('#wk').onclick = e => { const b = e.target.closest('[data-wk]'); if (!b) return; const n = +b.dataset.wk; st.week = n ? C.addDays(st.week, n) : C.mondayOf(C.today()); rerender(); };
     el.querySelector('#fdiv').onchange = e => { st.division = e.target.value; st.team = ''; rerender(); };
     el.querySelector('#fteam').onchange = e => { st.team = e.target.value; rerender(); };
     el.querySelector('#fpark').onchange = e => { st.park = e.target.value; rerender(); };
-    const ft = el.querySelector('#ftype'); if (ft) ft.onchange = e => { st.type = e.target.value; rerender(); };
     const fm = el.querySelector('#fmine'); if (fm) fm.onchange = e => { st.mine = e.target.checked; rerender(); };
     el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { st.view = b.dataset.view; rerender(); });
     el.querySelectorAll('[data-day]').forEach(b => b.onclick = () => { st.day = b.dataset.day; rerender(); });
     out.onclick = e => {
+      if (e.target.closest('a')) return;
       const it = e.target.closest('[data-event]'); if (!it) return;
       const ev = events.find(x => x.id === +it.dataset.event);
       if (ev) eventModal(ev);
@@ -72,7 +88,7 @@
     const add = el.querySelector('#add'); if (add) add.onclick = () => editModal(null);
   }
   CS.renderSchedule = renderSchedule;
-  CS.S.pages.schedule = el => renderSchedule(el, 'game');
+  CS.dutyLine = dutyLine;
 
   function dayGrid(events) {
     const days = [0, 1, 2, 3, 4, 5, 6].map(i => C.addDays(st.week, i)).filter(d => ![0, 3].includes(C.toDate(d).getDay()));
@@ -102,18 +118,22 @@
   function eventModal(e) {
     const r = S.me.roles;
     const teams = [e.team_id, e.home_team_id, e.away_team_id].filter(Boolean).map(id => S.meta.teams.find(t => t.id === id)).filter(Boolean);
-    const coaches = teams.map(t => `<div style="margin-bottom:6px"><b>${esc(t.name)}</b><br>${t.coaches.map(c => `${esc(c.first)} ${esc(c.last)} (${c.role === 'head' ? 'head' : 'asst'}) ${C.telLink(c.phone)}`).join('<br>') || '<span class="muted">No coaches listed</span>'}</div>`).join('');
-    const myTeams = r.coachTeams.map(t => t.id);
+    const coaches = teams.map(t => `<div style="margin-bottom:6px"><b>${esc(t.name)}</b><br>${t.coaches.map(c => `${esc(c.first)} ${esc(c.last)} (${c.role === 'head' ? 'head' : c.role === 'practice' ? 'practice' : 'asst'}) ${C.telLink(c.phone)}`).join('<br>') || '<span class="muted">No coaches listed</span>'}</div>`).join('');
+    const myTeams = r.manageTeams.map(t => t.id);
     const isMinePractice = e.type === 'practice' && myTeams.includes(e.team_id);
     const otherPractice = e.type === 'practice' && myTeams.length && !myTeams.includes(e.team_id);
     C.modal(C.eventTitle(e), `
       <p>${C.typeBadge(e)} ${C.statusBadge(e)} <span class="badge outline">${esc(e.division_name || '')}</span></p>
       <p><b>${C.dLong(e.date)}</b>, ${C.t12(e.start)} to ${C.t12(e.end)}<br>${esc(e.park_short)} ${esc(e.field_name)}</p>
       ${e.umpires ? `<p class="small"><b>Umpires:</b> ${esc(e.umpires)}</p>` : ''}
+      ${(e.conflicts || []).length ? `<div class="card" style="margin-bottom:10px;border-color:#EBC3BE"><div class="label" style="margin-bottom:4px">Coach on two teams</div>
+        ${e.conflicts.map(c => `<div class="small" style="margin-bottom:6px"><span class="badge ${c.kind === 'overlap' ? 'bad' : 'warn'}">${c.kind === 'overlap' ? 'Same time' : 'Other park'}</span>
+          <b>${esc(c.coach)}</b> also has ${esc(c.other.who)}, ${C.t12(c.other.start)} at ${esc(c.other.park)} ${esc(c.other.field)}.
+          ${r.board || r.scheduler ? `<button class="btn ghost small" data-ack="${esc(c.key)}">Mark as OK</button>` : ''}</div>`).join('')}</div>` : ''}
       ${e.notes ? `<p class="small">${esc(e.notes)}</p>` : ''}
       <div class="card" style="margin-bottom:12px"><div class="label" style="margin-bottom:6px">Coaches</div>${coaches}</div>
       <div class="btnrow">
-        ${isMinePractice ? '<a class="btn ghost" href="#/practices/swaps">Swap or invite to scrimmage</a>' : ''}
+        ${isMinePractice ? '<a class="btn ghost" href="#/schedule/swaps">Swap or invite to scrimmage</a>' : ''}
         ${otherPractice ? `<button class="btn ghost" id="askswap">Ask to swap for this time</button>` : ''}
         ${r.scheduler ? '<button class="btn" id="edit">Edit / move</button>' : ''}
         ${r.scheduler && e.type === 'game' && e.status === 'scheduled' ? '<button class="btn bad" id="rain">Rain out</button>' : ''}
@@ -122,6 +142,9 @@
       const on = (id, fn) => { const b = m.querySelector(id); if (b) b.onclick = () => fn(b); };
       on('#edit', () => { close(); editModal(e); });
       on('#rain', async b => { await C.act(b, () => C.patch(`/api/events/${e.id}`, { status: 'rainout' }), 'Marked rained out. Coaches and umpires were told.'); close(); makeupModal(e); });
+      m.querySelectorAll('[data-ack]').forEach(b => b.onclick = async () => {
+        if (await C.act(b, () => C.post('/api/conflicts/ack', { key: b.dataset.ack }), 'Marked as OK. The badge is gone.')) { close(); CS.route(); }
+      });
       on('#restore', async b => { await C.act(b, () => C.patch(`/api/events/${e.id}`, { status: 'scheduled' }), 'Restored'); close(); CS.route(); });
       on('#askswap', () => { close(); CS.practiceSwapFrom && CS.practiceSwapFrom(e); });
     });
@@ -136,7 +159,7 @@
         const b = ev.target.closest('[data-i]'); if (!b) return;
         const o = opts[+b.dataset.i];
         const ok = await C.act(b, () => C.patch(`/api/events/${e.id}`, { date: o.date, fieldId: o.field_id, slotCode: o.slot_code, status: 'scheduled' }), 'Game moved. Coaches and umpires were told.');
-        if (ok) { close(); CS.route(); }
+        if (ok) { close(); CS.route(); C.showWarnings(ok); }
       };
     });
     CS.route();
@@ -151,7 +174,7 @@
 
   function editModal(e) {
     const isNew = !e;
-    e = e || { type: mode === 'game' ? 'game' : 'practice', date: st.day || C.today(), field_id: S.meta.fields[0].id, slot_code: 'early', division_id: '', published: 1 };
+    e = e || { type: mode === 'games' ? 'game' : 'practice', date: st.day || C.today(), field_id: S.meta.fields[0].id, slot_code: 'early', division_id: '', published: 1 };
     const fieldOpts = S.meta.fields.map(f => `<option value="${f.id}" ${f.id === e.field_id ? 'selected' : ''}>${esc(f.park_short)} ${esc(f.name)}</option>`).join('');
     C.modal(isNew ? 'Add event' : 'Edit event', `
       <div class="field"><label>Type</label><select id="type">${['game', 'practice', 'scrimmage', 'other'].map(t => `<option ${t === e.type ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
@@ -180,7 +203,7 @@
           title: $('#title').value, notes: $('#notes').value, published: $('#pub').checked,
           teamId: $('#team') ? +$('#team').value || null : null, homeTeamId: $('#home') ? +$('#home').value || null : null, awayTeamId: $('#away') ? +$('#away').value || null : null };
         const ok = await C.act($('#save'), () => isNew ? C.post('/api/events', body) : C.patch(`/api/events/${e.id}`, body), 'Saved');
-        if (ok) { close(); CS.route(); }
+        if (ok) { close(); CS.route(); C.showWarnings(ok); }
       };
       const d = $('#del'); if (d) d.onclick = async () => { close(); if (await C.confirmBox('Delete event?', 'This removes it from everyone\'s schedule.', 'Delete')) { await C.act(null, () => C.del(`/api/events/${e.id}`), 'Deleted'); CS.route(); } };
     });

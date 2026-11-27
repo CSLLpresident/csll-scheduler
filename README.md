@@ -40,6 +40,12 @@ If you leave the Twilio or SMTP settings blank, the app still works. Messages la
 3. **Umpires › Roster:** set which divisions each umpire works. Ask everyone to fill in **Availability**.
 4. **Admin › Build schedules:** build games, practices, umpires and field duty shifts, review the drafts on **Practice Schedule** and **Game Schedule**, then **Publish and release**.
 
+## Seasons and coach roles
+
+- **Admin › Season** creates a season (Spring, Fall, All-Stars or Demo, plus the year) with its own dates, and switches between seasons. Teams, coaches and the priority list belong to a season; people carry over.
+- Coach roles on a team: **head**, **assistant** (both can request practices, swap and invite to scrimmages) and **practice coach** (sees the schedule only).
+- **Admin › Coaches on 2+ teams** lists every coach with more than one team and any schedule conflicts: *same time* (fix it) or *same night at another park* (heads-up). Same night at the same park in different slots is what the builder aims for and isn't flagged. Conflicts can be marked OK, which removes the badge on the schedule. Hand edits, extra practices, swaps and scrimmages warn about these but never block.
+
 ## How the main rules work
 
 | Area | Rule |

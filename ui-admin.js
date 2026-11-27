@@ -6,12 +6,12 @@
   CS.S.pages.admin = async (el, rest) => {
     const r = S.me.roles;
     if (rest && rest[0]) tab = rest[0];
-    const tabs = [['build', 'Build schedules'], r.admin && ['setup', 'Setup'], r.admin && ['people', 'People'], r.admin && ['teams', 'Teams'], r.admin && ['import', 'Import'], ['exports', 'Exports'], r.admin && ['status', 'Status']].filter(Boolean);
+    const tabs = [r.admin && ['seasons', 'Season'], ['build', 'Build schedules'], ['coaches', 'Coaches on 2+ teams'], r.admin && ['setup', 'Setup'], r.admin && ['people', 'People'], r.admin && ['teams', 'Teams'], r.admin && ['import', 'Import'], ['exports', 'Exports'], r.admin && ['status', 'Status']].filter(Boolean);
     if (!tabs.some(t => t[0] === tab)) tab = 'build';
-    el.innerHTML = `<div class="pagehead"><div><h1>Admin</h1><div class="sub">${esc(S.meta.settings.season_name)} · games start ${C.dLong(S.meta.settings.game_start)}</div></div></div>
+    el.innerHTML = `<div class="pagehead"><div><h1>Admin</h1><div class="sub">${esc(S.meta.settings.season_name)} · practices ${C.dShort(S.meta.settings.practice_start)} · games ${C.dShort(S.meta.settings.game_start)}</div></div></div>
       <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}">${l}</button>`).join('')}</div><div id="out"><div class="spinner"></div></div>`;
     el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { location.hash = '#/admin/' + b.dataset.tab; });
-    return ({ build, setup, people, teams, import: importTab, exports, status })[tab](el.querySelector('#out'));
+    return ({ seasons, build, coaches, setup, people, teams, import: importTab, exports, status })[tab](el.querySelector('#out'));
   };
 
   // ---------------- build ----------------
@@ -52,13 +52,13 @@
     $('#bg').onclick = async () => {
       await C.put('/api/settings', { sm_late_only: $('#smlate').checked, game_start: $('#gs').value, game_weeks: +$('#gw').value }).catch(C.fail);
       const r = await C.act($('#bg'), () => C.post('/api/build/games', { start: $('#gs').value, weeks: +$('#gw').value }));
-      if (r) { await CS.refreshMeta(); $('#rg').innerHTML = `<p><span class="badge ok">${r.created} games created</span> ${r.unplaced.length ? `<span class="badge bad">${r.unplaced.length} could not be placed</span>` : ''}</p>${r.unplaced.length ? `<div class="tablewrap"><table><tr><th>Week</th><th>Division</th><th>Game</th></tr>${r.unplaced.map(u => `<tr><td>${u.week}</td><td>${esc(u.division)}</td><td>${esc(u.away)} at ${esc(u.home)}</td></tr>`).join('')}</table></div>` : ''}<a class="small" href="#/schedule">Review on the Game Schedule</a> (drafts are marked until you release them)`; }
+      if (r) { await CS.refreshMeta(); $('#rg').innerHTML = `<p><span class="badge ok">${r.created} games created</span> ${r.unplaced.length ? `<span class="badge bad">${r.unplaced.length} could not be placed</span>` : ''}</p>${r.unplaced.length ? `<div class="tablewrap"><table><tr><th>Week</th><th>Division</th><th>Game</th></tr>${r.unplaced.map(u => `<tr><td>${u.week}</td><td>${esc(u.division)}</td><td>${esc(u.away)} at ${esc(u.home)}</td></tr>`).join('')}</table></div>` : ''}<a class="small" href="#/schedule">Review on the Schedule</a> (drafts are marked until you release them)`; }
     };
     $('#bp').onclick = async () => {
       const r = await C.act($('#bp'), () => C.post('/api/build/practices', { start: $('#ps').value, end: $('#pe').value, perWeek: $('#pw').value || null, saturdays: $('#psat').checked }));
       if (r) {
         const fair = r.fairness.map(f => f.got / f.asked); const min = fair.length ? Math.round(Math.min(...fair) * 100) : null, max = fair.length ? Math.round(Math.max(...fair) * 100) : null;
-        $('#rp').innerHTML = `<p><span class="badge ok">${r.created} practices created</span> ${r.short.length ? `<span class="badge warn">${r.short.length} team-weeks short of a slot</span>` : ''}</p>${min !== null ? `<p class="small">Coach availability honored: ${min}% to ${max}% across coaches who entered it.</p>` : ''}<a class="small" href="#/practices/schedule">Review on the Practice Schedule</a>`;
+        $('#rp').innerHTML = `<p><span class="badge ok">${r.created} practices created</span> ${r.short.length ? `<span class="badge warn">${r.short.length} team-weeks short of a slot</span>` : ''}</p>${min !== null ? `<p class="small">Coach availability honored: ${min}% to ${max}% across coaches who entered it.</p>` : ''}<a class="small" href="#/schedule">Review on the Schedule</a>`;
       }
     };
     $('#bu').onclick = async () => { const r = await C.act($('#bu'), () => C.post('/api/build/umpires', { start: $('#us').value, end: $('#ue').value })); if (r) $('#ru').innerHTML = `<p><span class="badge ok">${r.filled} spots filled</span> ${r.stillOpen ? `<span class="badge bad">${r.stillOpen} still open</span> <a href="#/umpires/assign">Assign by hand</a>` : ''}</p>`; };
@@ -86,7 +86,7 @@
     const rules = { early: 'Early only', late: 'Late only', seven: '7:00 slot', any: 'Early or late', tball: 'T-Ball slot' };
     out.innerHTML = `
       <div class="card"><h3>Season</h3><div class="grid three">
-        <div class="field"><label>Season name</label><input type="text" id="season_name" value="${esc(s.season_name)}"></div>
+        <div class="field"><label>Season</label><div style="padding:8px 0"><b>${esc(s.season_name)}</b> · <a href="#/admin/seasons">change</a></div></div>
         <div class="field"><label>Practices start</label><input type="date" id="practice_start" value="${s.practice_start}"></div>
         <div class="field"><label>T-Ball practices start</label><input type="date" id="tball_practice_start" value="${s.tball_practice_start}"></div>
         <div class="field"><label>Games start (Monday)</label><input type="date" id="game_start" value="${s.game_start}"></div>
@@ -124,7 +124,7 @@
     const nums = s => s.split(',').map(x => +x.trim()).filter(x => !isNaN(x) && x > 0);
     $('#saveS').onclick = async () => {
       const body = {};
-      ['season_name', 'practice_start', 'tball_practice_start', 'game_start'].forEach(k => body[k] = $('#' + k).value);
+      ['practice_start', 'tball_practice_start', 'game_start'].forEach(k => body[k] = $('#' + k).value);
       ['game_weeks', 'makeup_weeks', 'tournament_weeks', 'request_deadline_days', 'duty_lead_minutes'].forEach(k => body[k] = +$('#' + k).value);
       body.duty_reminder_hours = nums($('#duty_reminder_hours').value); body.duty_quiet_hours = nums($('#duty_quiet_hours').value);
       body.game_nights = [...out.querySelectorAll('.gn:checked')].map(i => +i.value);
@@ -179,7 +179,7 @@
       <div class="field"><label>Email</label><input type="email" id="email" value="${esc(p.email || '')}"></div>
       <div class="label">Roles</div>${ROLE_COLS.map(([k, l]) => `<label class="check"><input type="checkbox" data-r="${k}" ${p[k] ? 'checked' : ''}> ${l}</label>`).join('')}
       ${isNew ? '' : `<label class="check"><input type="checkbox" id="active" ${p.active ? 'checked' : ''}> Active (can log in)</label>`}
-      <p class="small muted">Coaches are linked to teams on the Teams tab or by import.</p>
+      <p class="small muted">Coaches are linked to teams on the Teams tab or by import. Practice coaches see the schedule but can't request practices or swap.</p>
       <button class="btn" id="save">Save</button>`, (m, close) => {
       m.querySelector('#save').onclick = async () => {
         const body = { first: m.querySelector('#first').value.trim(), last: m.querySelector('#last').value.trim(), phone: m.querySelector('#phone').value.trim(), email: m.querySelector('#email').value.trim() };
@@ -198,7 +198,7 @@
       ${S.meta.divisions.filter(d => d.active).map(d => {
         const ts = S.meta.teams.filter(t => t.division_id === d.id);
         return `<h2>${esc(d.name)} <span class="small muted">(${ts.length})</span></h2>${ts.map(t => `<div class="item"><div class="bar" style="background:${esc(d.color)}"></div><div class="main"><div class="title">${esc(t.name)}</div>
-          <div class="meta">${t.coaches.map(c => `${esc(c.first)} ${esc(c.last)} (${c.role === 'head' ? 'head' : 'asst'})${c.is_board ? ' <span class="badge maroon">Board</span>' : ''}`).join(', ') || '<span class="badge bad">No coach</span>'}</div></div>
+          <div class="meta">${t.coaches.map(c => `${esc(c.first)} ${esc(c.last)} (${c.role === 'head' ? 'head' : c.role === 'practice' ? 'practice' : 'asst'})${c.is_board ? ' <span class="badge maroon">Board</span>' : ''}`).join(', ') || '<span class="badge bad">No coach</span>'}</div></div>
           <button class="btn ghost small" data-team="${t.id}">Edit</button></div>`).join('') || '<p class="muted small">No teams.</p>'}`;
       }).join('')}`;
     out.querySelector('#add').onclick = () => teamModal(null, ppl);
@@ -214,7 +214,7 @@
       ${isNew ? '' : `<div class="label">Coaches</div><div id="cl"></div><button class="btn ghost small" id="addc">Add coach</button>`}
       <div class="btnrow" style="margin-top:12px"><button class="btn" id="save">Save</button>${isNew ? '' : '<button class="btn bad" id="deact">Remove team</button>'}</div>`, (m, close) => {
       const draw = () => { const cl = m.querySelector('#cl'); if (!cl) return; cl.innerHTML = coaches.map((c, i) => `<div class="grid two" style="grid-template-columns:2fr 1fr auto;margin-bottom:6px"><select data-p="${i}">${pOpts(c.personId)}</select>
-        <select data-role="${i}"><option value="head" ${c.role === 'head' ? 'selected' : ''}>Head</option><option value="assistant" ${c.role === 'assistant' ? 'selected' : ''}>Assistant</option></select><button class="btn ghost small" data-x="${i}">${C.icon('x')}</button></div>`).join(''); };
+        <select data-role="${i}"><option value="head" ${c.role === 'head' ? 'selected' : ''}>Head</option><option value="assistant" ${c.role === 'assistant' ? 'selected' : ''}>Assistant</option><option value="practice" ${c.role === 'practice' ? 'selected' : ''}>Practice coach</option></select><button class="btn ghost small" data-x="${i}">${C.icon('x')}</button></div>`).join(''); };
       draw();
       m.onchange = e => { if (e.target.dataset.p) coaches[+e.target.dataset.p].personId = +e.target.value; if (e.target.dataset.role) coaches[+e.target.dataset.role].role = e.target.value; };
       m.onclick = e => { const x = e.target.closest('[data-x]'); if (x) { coaches.splice(+x.dataset.x, 1); draw(); } };
@@ -234,7 +234,7 @@
   // ---------------- import ----------------
   function importTab(out) {
     out.innerHTML = `<div class="grid two">
-      <div class="card"><h3>People</h3><p class="small muted">Coaches, board members and umpires. Columns (any order): <b>First, Last, Phone, Email, Roles</b> (e.g. "board; umpire; coach; ump coord; president"). Optional: <b>Team, Division, Coach Role</b> (head/assistant), <b>Umpire Divisions</b> (e.g. "JMAA; JMAAA; SMAA").</p>
+      <div class="card"><h3>People</h3><p class="small muted">Coaches, board members and umpires. Columns (any order): <b>First, Last, Phone, Email, Roles</b> (e.g. "board; umpire; coach; ump coord; president"). Optional: <b>Team, Division, Coach Role</b> (head / assistant / practice), <b>Umpire Divisions</b> (e.g. "JMAA; JMAAA; SMAA").</p>
         <input type="file" id="pf" accept=".csv,text/csv"><textarea id="pt" placeholder="Or paste CSV here" style="margin-top:8px"></textarea>
         <div class="btnrow" style="margin-top:8px"><button class="btn ghost" id="pp">Preview</button><button class="btn" id="pa" disabled>Import</button></div><div id="pr"></div></div>
       <div class="card"><h3>Sports Connect teams</h3><p class="small muted">Export teams with volunteers (coaches) from Sports Connect as CSV. We match divisions by name, add new teams and coaches, and show changes before anything is saved. Nobody is removed automatically.</p>
@@ -256,6 +256,75 @@
       $('#sa').disabled = !rows.length;
     };
     $('#sa').onclick = async () => { const r = await C.act($('#sa'), () => C.post('/api/import/sportsconnect/apply', { csv: $('#stx').value })); if (r) { C.toast(`${r.teamsAdded} teams, ${r.peopleAdded} new people, ${r.links} coach links`); await CS.refreshMeta(); $('#sa').disabled = true; } };
+  }
+
+  // ---------------- seasons ----------------
+  async function seasons(out) {
+    const list = await C.get('/api/seasons');
+    const cur = list.find(x => x.current);
+    const y = new Date().getFullYear();
+    out.innerHTML = `
+      <div class="card"><div class="label">Current season</div><h3 style="font-size:22px">${cur ? esc(cur.name) : 'None'}</h3>
+        <p class="small muted" style="margin:0">Teams, coaches and the priority list belong to a season. People (coaches, board, umpires) carry over from season to season.</p></div>
+      <h2>All seasons</h2>
+      <div class="tablewrap"><table><thead><tr><th>Season</th><th>Practices start</th><th>Games start</th><th class="num">Teams</th><th></th></tr></thead><tbody>
+      ${list.map(x => `<tr><td><b>${esc(x.name)}</b> ${x.current ? '<span class="badge maroon">Current</span>' : ''}</td><td>${x.settings.practice_start ? C.dShort(x.settings.practice_start) : ''}</td>
+        <td>${x.settings.game_start ? C.dShort(x.settings.game_start) : ''}</td><td class="num">${x.teams}</td>
+        <td>${x.current ? '' : `<button class="btn ghost small" data-act="${x.id}">Make current</button>`}</td></tr>`).join('')}
+      </tbody></table></div>
+      <h2>Start a new season</h2>
+      <div class="card"><div class="grid three">
+        <div class="field"><label>Season</label><select id="kind">${['Spring', 'Fall', 'All-Stars', 'Demo'].map(k => `<option>${k}</option>`).join('')}</select></div>
+        <div class="field"><label>Year</label><input type="number" id="year" value="${y + 1}" min="2020" max="2100"></div>
+        <div class="field"><label>Practices start</label><input type="date" id="ps"></div>
+        <div class="field"><label>T-Ball practices start</label><input type="date" id="tps"></div>
+        <div class="field"><label>Games start (Monday)</label><input type="date" id="gs"></div>
+        <div class="field"><label>Game weeks</label><input type="number" id="gw" value="${cur?.settings.game_weeks || 8}" min="1" max="20"></div>
+        <div class="field"><label>Makeup weeks</label><input type="number" id="mw" value="${cur?.settings.makeup_weeks ?? 1}" min="0" max="4"></div>
+        <div class="field"><label>Tournament weeks</label><input type="number" id="tw" value="${cur?.settings.tournament_weeks ?? 1}" min="0" max="4"></div></div>
+        ${cur ? `<label class="check"><input type="checkbox" id="copyTeams"> Copy team names from ${esc(cur.name)} (handy for All-Stars or a demo)</label>
+        <label class="check"><input type="checkbox" id="copyCoaches"> ...and their coaches</label>` : ''}
+        <label class="check"><input type="checkbox" id="activate" checked> Make it the current season now</label>
+        <p class="small muted">Next: add teams and coaches (Teams or Import tab), then build schedules. Umpires and board members are already in People.</p>
+        <button class="btn" id="create">Create season</button></div>`;
+    out.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+      if (!await C.confirmBox('Switch seasons?', 'Everyone will see that season\'s teams and schedule.', 'Switch')) return;
+      if (await C.act(b, () => C.post(`/api/seasons/${b.dataset.act}/activate`), 'Season switched')) { await CS.refreshMeta(); location.reload(); }
+    });
+    out.querySelector('#create').onclick = async () => {
+      const $ = q => out.querySelector(q);
+      const body = { kind: $('#kind').value, year: +$('#year').value, practice_start: $('#ps').value, tball_practice_start: $('#tps').value || $('#ps').value, game_start: $('#gs').value,
+        game_weeks: +$('#gw').value, makeup_weeks: +$('#mw').value, tournament_weeks: +$('#tw').value, activate: $('#activate').checked,
+        copyTeamsFrom: $('#copyTeams') && $('#copyTeams').checked ? cur.id : null, copyCoaches: $('#copyCoaches') && $('#copyCoaches').checked };
+      if (await C.act($('#create'), () => C.post('/api/seasons', body), `${body.kind} ${body.year} created`)) { await CS.refreshMeta(); if (body.activate) location.reload(); else CS.route(); }
+    };
+  }
+
+  // ---------------- coaches on more than one team ----------------
+  async function coaches(out) {
+    const data = await C.get('/api/conflicts');
+    const open = data.conflicts.filter(c => !c.acknowledged), done = data.conflicts.filter(c => c.acknowledged);
+    const row = c => `<div class="item"><div class="time">${C.dShort(c.date)}</div><div class="main">
+        <div class="title"><span class="badge ${c.kind === 'overlap' ? 'bad' : 'warn'}">${c.kind === 'overlap' ? 'Same time' : 'Other park'}</span> ${esc(c.coach.first)} ${esc(c.coach.last)}</div>
+        <div class="meta">${C.t12(c.a.start)} ${esc(c.a.who)} (${esc(c.a.park)} ${esc(c.a.field)}) · ${C.t12(c.b.start)} ${esc(c.b.who)} (${esc(c.b.park)} ${esc(c.b.field)})</div></div>
+        ${c.acknowledged ? `<span class="badge ok">OK</span><button class="btn ghost small" data-unack="${esc(c.key)}">Undo</button>` : `<button class="btn ghost small" data-ack="${esc(c.key)}">Mark as OK</button>`}</div>`;
+    out.innerHTML = `
+      <p class="small muted" style="margin-top:0">Same night at the same park in different time slots is fine and isn't listed. <b>Same time</b> needs fixing; <b>Other park</b> is a heads-up. Mark one as OK once it's handled (another coach covering, for example) and its badge goes away.</p>
+      <div class="grid three" style="margin-bottom:8px"><div class="stat"><b>${data.coaches.length}</b><span>Coaches on 2+ teams</span></div>
+        <div class="stat"><b>${open.filter(c => c.kind === 'overlap').length}</b><span>Same-time conflicts</span></div>
+        <div class="stat"><b>${open.filter(c => c.kind === 'other_park').length}</b><span>Same night, other park</span></div></div>
+      <h2>Conflicts to review (${open.length})</h2>
+      ${open.length ? open.map(row).join('') : '<div class="empty">No conflicts. Nice.</div>'}
+      ${done.length ? `<h2>Marked OK (${done.length})</h2>${done.map(row).join('')}` : ''}
+      <h2>Coaches on more than one team</h2>
+      ${data.coaches.length ? `<div class="tablewrap"><table><thead><tr><th>Coach</th><th>Teams</th><th>Phone</th></tr></thead><tbody>
+        ${data.coaches.map(c => `<tr><td><b>${esc(c.first)} ${esc(c.last)}</b></td><td>${c.teams.map(t => `${esc(t.name)} <span class="muted small">(${t.role})</span>`).join('<br>')}</td><td>${C.telLink(c.phone)}</td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="empty">No coach is on more than one team.</div>'}`;
+    out.onclick = async e => {
+      const a = e.target.closest('[data-ack]'), u = e.target.closest('[data-unack]');
+      if (a && await C.act(a, () => C.post('/api/conflicts/ack', { key: a.dataset.ack }), 'Marked as OK')) CS.route();
+      if (u && await C.act(u, () => C.post('/api/conflicts/unack', { key: u.dataset.unack }), 'Back on the list')) CS.route();
+    };
   }
 
   // ---------------- exports ----------------

@@ -1,5 +1,5 @@
 // League defaults for Spring 2027. Loaded once into an empty database; everything is editable in Admin > Setup.
-const { get, run, setSetting, setting, tx } = require('./db');
+const { get, run, setSetting, setting, tx, all, currentSeason, createSeason, activateSeason } = require('./db');
 
 const DIVISIONS = [
   // code, name, slot_rule, field_kind, plate, field, games/wk, practices/wk, color, active
@@ -40,7 +40,7 @@ const TB_SLOTS = (start, end) => [
 ];
 
 function loadDefaults() {
-  if (get('SELECT id FROM divisions LIMIT 1')) return false;
+  if (get('SELECT id FROM divisions LIMIT 1')) { ensureSeason(); return false; }
   tx(() => {
     DIVISIONS.forEach((d, i) => run(
       `INSERT INTO divisions(code,name,slot_rule,field_kind,crew_plate,crew_field,games_per_week,practices_per_week,color,active,sort)
@@ -86,7 +86,24 @@ function loadDefaults() {
     ump_swap_needs_approval: false,
   };
   for (const [k, v] of Object.entries(defaults)) if (setting(k) === null) setSetting(k, v);
+  ensureSeason();
   return true;
 }
 
-module.exports = { loadDefaults };
+// Every database has a current season. Older databases get one made from their settings.
+function ensureSeason() {
+  if (currentSeason()) return;
+  const existing = get('SELECT id FROM seasons ORDER BY id DESC LIMIT 1');
+  let id = existing && existing.id;
+  if (!id) {
+    const pick = {};
+    for (const k of ['practice_start', 'tball_practice_start', 'game_start', 'game_weeks', 'makeup_weeks', 'tournament_weeks']) pick[k] = setting(k);
+    const name = String(setting('season_name') || 'Spring 2027');
+    const m = name.match(/(Spring|Fall|All-Stars|Demo)\s+(\d{4})/i);
+    id = createSeason(m ? m[1] : 'Spring', m ? Number(m[2]) : 2027, pick);
+  }
+  run('UPDATE teams SET season_id=? WHERE season_id IS NULL', id);
+  activateSeason(id);
+}
+
+module.exports = { loadDefaults, ensureSeason };

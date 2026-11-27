@@ -5,7 +5,7 @@
 const { all, run, tx, setting } = require('./db');
 const T = require('./time');
 const { loadFields, slotInstances, eventsBetween, overlaps, slotGroup } = require('./engine-slots');
-const { leagueContext, eventTeams, seededRandom, shuffle } = require('./engine-context');
+const { leagueContext, eventTeams, seededRandom, shuffle, coachOverlapCost } = require('./engine-context');
 
 // Circle-method round robin. Returns array of rounds, each an array of [home, away].
 function roundRobin(teamIds, rnd) {
@@ -112,13 +112,8 @@ function generateGames(opts = {}) {
           if (P.some(e => e.date === si.date && e.field_id === si.field_id && overlaps(e.start, e.end, si.start, si.end))) continue;
           if (st(m.home).dates.has(si.date) || st(m.away).dates.has(si.date)) continue;
           const sameNight = P.filter(e => e.date === si.date);
-          let conflict = false;
-          for (const e of sameNight) for (const tid of eventTeams(e)) {
-            const t = ctx.teamById.get(tid); if (!t) continue;
-            if (t.coachIds.some(c => coachIds.includes(c))) conflict = true;
-          }
-          if (conflict) continue;
-          let cost = 0;
+          // a coach on two teams: other night best; same night only at the same park in another slot
+          let cost = coachOverlapCost(si, coachIds, sameNight, ctx, [m.home, m.away], 'game');
           const sameDivNight = sameNight.filter(e => e.type === 'game' && e.division_id === m.div.id);
           if (m.div.code.startsWith('JM')) {
             const atPark = sameDivNight.filter(e => e.park_id === si.park_id).length;

@@ -6,7 +6,7 @@
 const { all, run, tx, setting } = require('./db');
 const T = require('./time');
 const { loadFields, freeSlots, eventsBetween, slotGroup } = require('./engine-slots');
-const { leagueContext, eventTeams, seededRandom, shuffle } = require('./engine-context');
+const { leagueContext, eventTeams, seededRandom, shuffle, coachOverlapCost } = require('./engine-context');
 
 function availabilityIndex(kind) {
   const rows = all('SELECT * FROM availability WHERE kind=?', kind);
@@ -82,12 +82,13 @@ function generatePractices(opts = {}) {
         const hasRules = rulesHead.length > 0;
         let best = null, bestCost = Infinity, bestScore = 0;
         const teamDates = new Set(placed.filter(e => eventTeams(e).includes(t.id)).map(e => e.date));
-        const coachBusy = new Set(placed.filter(e => eventTeams(e).some(tid => tid !== t.id && ctx.teamById.get(tid)?.coachIds.some(c => t.coachIds.includes(c)))).map(e => e.date + '|' + e.group));
+        const shared = placed.filter(e => eventTeams(e).some(tid => tid !== t.id && ctx.teamById.get(tid)?.coachIds.some(c => t.coachIds.includes(c))));
         for (const si of free) {
           if (!fieldFits(t.division, si)) continue;
-          if (teamDates.has(si.date) || coachBusy.has(si.date + '|' + si.group)) continue;
+          if (teamDates.has(si.date)) continue;
           if (t.division.code === 'TB' && si.date < tballStart) continue;
-          let cost = 0;
+          // a coach on two teams: same night at the same park (early + late) is preferred
+          let cost = shared.length ? coachOverlapCost(si, t.coachIds, shared, ctx, [t.id], 'practice') : 0;
           const score = availScore(rulesHead, si.date, si.group);
           cost -= 10 * score;
           cost -= 2 * availScore(rulesAll, si.date, si.group);

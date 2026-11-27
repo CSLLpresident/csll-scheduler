@@ -1,24 +1,26 @@
-// Practice Schedule: the practice calendar, plus open slots, extra practice requests (priority list), swaps and scrimmage invites.
+// Schedule page (practices + games) with the coach tabs: open slots, extra practice requests (priority list), swaps and scrimmage invites.
 (function () {
   const C = CS, { S, esc } = C;
   const st = { team: null, tab: 'schedule', week: null };
+  // old links (#/practices/...) land on the same page
+  CS.S.pages.practices = (el, rest) => CS.S.pages.schedule(el, rest);
 
-  CS.S.pages.practices = async (el, rest) => {
+  CS.S.pages.schedule = async (el, rest) => {
     const r = S.me.roles;
-    if (rest && rest[0]) st.tab = rest[0];
-    const myTeams = r.admin ? S.meta.teams.map(t => ({ id: t.id, name: t.name, division_name: t.division_name })) : r.coachTeams;
+    st.tab = (rest && rest[0]) || 'schedule';
+    const myTeams = r.admin ? S.meta.teams.map(t => ({ id: t.id, name: t.name, division_name: t.division_name })) : r.manageTeams;
     const coachTabs = myTeams.length ? [['open', 'Open fields'], ['requests', 'My requests'], ['swaps', 'Swaps & scrimmages'], ['list', 'Priority list']] : [];
     const tabs = [['schedule', 'Schedule'], ...coachTabs];
     if (!tabs.some(t => t[0] === st.tab)) st.tab = 'schedule';
 
     el.innerHTML = `
-      <div class="pagehead"><div><h1>Practice Schedule</h1><div class="sub">Every practice and scrimmage. Practices start ${C.dLong(S.meta.settings.practice_start)}, before games.${myTeams.length ? ' Coaches can also ask for extra field time, trade practices or set up a scrimmage.' : ''}</div></div>
-        ${myTeams.length > 1 && st.tab !== 'schedule' ? `<select id="team" style="max-width:280px" aria-label="Team">${myTeams.map(t => `<option value="${t.id}" ${t.id === st.team ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}</div>
+      <div class="pagehead"><div><h1>Schedule</h1><div class="sub">Practices start ${C.dShort(S.meta.settings.practice_start)}, games ${C.dShort(S.meta.settings.game_start)}.${myTeams.length ? ' Coaches: ask for extra field time, trade practices or set up a scrimmage in the other tabs.' : ''}</div></div>
+        ${myTeams.length > 1 && st.tab !== 'schedule' ? `<select id="team" style="max-width:260px" aria-label="Team">${myTeams.map(t => `<option value="${t.id}" ${t.id === st.team ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>` : ''}</div>
       ${tabs.length > 1 ? `<div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${st.tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
       <div id="out"><div class="spinner"></div></div>`;
-    el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { st.tab = b.dataset.tab; location.hash = '#/practices/' + st.tab; });
+    el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { location.hash = '#/schedule/' + b.dataset.tab; });
     const out = el.querySelector('#out');
-    if (st.tab === 'schedule') return CS.renderSchedule(out, 'practice', { embedded: true });
+    if (st.tab === 'schedule') return CS.renderSchedule(out, null, { embedded: true });
 
     if (!st.team || !myTeams.some(t => t.id === st.team)) st.team = myTeams[0].id;
     if (!st.week) st.week = C.mondayOf(C.today() < S.meta.settings.practice_start ? S.meta.settings.practice_start : C.today());
@@ -54,7 +56,7 @@
       const b = e.target.closest('[data-req]'); if (!b) return;
       const body = { ...JSON.parse(b.dataset.req), teamId: team.id };
       const r = await C.act(b, () => C.post('/api/practice/requests', body));
-      if (r) { C.toast(r.status === 'awarded' ? 'Booked! It\'s on your schedule.' : `Requested. Decided ${C.dtShort(r.decidesAt)}.`); CS.route(); }
+      if (r) { C.toast(r.status === 'awarded' ? 'Booked! It\'s on your schedule.' : `Requested. Decided ${C.dtShort(r.decidesAt)}.`); CS.route(); C.showWarnings(r); }
     };
   }
 
@@ -68,7 +70,7 @@
         <div class="meta">Decided ${C.dtShort(q.decidesAt)} · ${q.competitors ? `${q.competitors} other request${q.competitors > 1 ? 's' : ''}` : 'No one else has asked'}</div></div>
         <div class="side">${q.atRisk ? '<span class="badge bad">At risk</span>' : '<span class="badge ok">Leading</span>'}
           <div class="btnrow"><button class="btn ghost small" data-up="${i}" aria-label="Move up">${C.icon('up')}</button><button class="btn ghost small" data-dn="${i}" aria-label="Move down">${C.icon('dn')}</button><button class="btn bad small" data-cancel="${q.id}">Cancel</button></div></div></div>`).join('')
-        : '<div class="empty">No requests waiting. <a href="#/practices/open">Find an open field</a>.</div>'}
+        : '<div class="empty">No requests waiting. <a href="#/schedule/open">Find an open field</a>.</div>'}
       <h2>Recent results</h2>
       ${data.history.length ? data.history.map(h => `<div class="item"><div class="main"><div class="title">${C.dShort(h.date)} ${C.t12(h.start)} · ${esc(h.park_short)} ${esc(h.field_name)}</div></div>
         <span class="badge ${h.status === 'awarded' ? 'ok' : h.status === 'lost' ? 'bad' : ''}">${h.status}</span></div>`).join('') : '<div class="empty">None yet.</div>'}`;
@@ -103,7 +105,7 @@
       ${swaps.filter(s => s.status !== 'open').length ? `<h2>History</h2>${swaps.filter(s => s.status !== 'open').slice(0, 10).map(s => `<div class="item"><div class="main"><div class="title">${s.kind}: ${esc(s.from_team_name)} → ${esc(s.to_team_name)}</div><div class="meta">${C.dShort(s.a_date)}</div></div><span class="badge">${s.status}</span></div>`).join('')}` : ''}`;
     out.onclick = async e => {
       const acc = e.target.closest('[data-acc]'), dec = e.target.closest('[data-dec]'), sw = e.target.closest('[data-swap]'), sc = e.target.closest('[data-scrim]');
-      if (acc) { await C.act(acc, () => C.post(`/api/swaps/${acc.dataset.acc}/respond`, { accept: true }), 'Done. Both schedules are updated.'); CS.route(); }
+      if (acc) { const r = await C.act(acc, () => C.post(`/api/swaps/${acc.dataset.acc}/respond`, { accept: true }), 'Done. Both schedules are updated.'); CS.route(); C.showWarnings(r); }
       if (dec) { await C.act(dec, () => C.post(`/api/swaps/${dec.dataset.dec}/respond`, { accept: false }), 'Declined'); CS.route(); }
       if (sw) swapPicker(mine.find(x => x.id === +sw.dataset.swap), team);
       if (sc) scrimPicker(mine.find(x => x.id === +sc.dataset.scrim), team);
@@ -119,19 +121,19 @@
       m.onclick = async ev => {
         const b = ev.target.closest('[data-pick]'); if (!b) return;
         const ok = await C.act(b, () => C.post('/api/swaps/practice', { eventA: myEvent.id, eventB: +b.dataset.pick, message: m.querySelector('#msg').value }), 'Offer sent');
-        if (ok) { close(); CS.route(); }
+        if (ok) { close(); CS.route(); C.showWarnings(ok); }
       };
     });
   }
   // from the Schedule page: "ask to swap for this time"
   CS.practiceSwapFrom = async other => {
     const r = S.me.roles;
-    const myTeam = r.coachTeams.find(t => t.division_id === other.division_id) || r.coachTeams[0];
+    const myTeam = r.manageTeams.find(t => t.division_id === other.division_id) || r.manageTeams[0];
     const start = C.mondayOf(other.date);
     const mine = await C.get(`/api/events?start=${C.today() > start ? C.today() : start}&end=${C.addDays(start, 13)}&team=${myTeam.id}&type=practice`);
     C.modal('Offer one of your practices', `<p class="small">You want <b>${C.dShort(other.date)} ${C.t12(other.start)}</b> (${esc(other.team_name)}). Which of your practices will you give them?</p>
       ${mine.length ? mine.map(e => `<div class="item"><div class="main"><div class="title">${C.dShort(e.date)} ${C.t12(e.start)}</div><div class="meta">${esc(e.park_short)} ${esc(e.field_name)}</div></div><button class="btn small" data-pick="${e.id}">Offer this</button></div>`).join('') : '<div class="empty">You have no practices near that date to trade.</div>'}`, (m, close) => {
-      m.onclick = async ev => { const b = ev.target.closest('[data-pick]'); if (!b) return; if (await C.act(b, () => C.post('/api/swaps/practice', { eventA: +b.dataset.pick, eventB: other.id }), 'Offer sent')) close(); };
+      m.onclick = async ev => { const b = ev.target.closest('[data-pick]'); if (!b) return; const ok = await C.act(b, () => C.post('/api/swaps/practice', { eventA: +b.dataset.pick, eventB: other.id }), 'Offer sent'); if (ok) { close(); C.showWarnings(ok); } };
     });
   };
 
@@ -142,7 +144,7 @@
       <div class="field"><label>Message (optional)</label><input type="text" id="msg"></div><button class="btn" id="send">Send invite</button>`, (m, close) => {
       m.querySelector('#send').onclick = async () => {
         const ok = await C.act(m.querySelector('#send'), () => C.post('/api/swaps/scrimmage', { eventA: myEvent.id, toTeam: +m.querySelector('#tm').value, message: m.querySelector('#msg').value }), 'Invite sent');
-        if (ok) { close(); CS.route(); }
+        if (ok) { close(); CS.route(); C.showWarnings(ok); }
       };
     });
   }

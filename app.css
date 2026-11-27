@@ -167,3 +167,70 @@ svg{width:20px;height:20px;flex:none}
 .filters .check input{flex:none;min-width:0;width:20px;max-width:20px}
 .filters .check{flex:none}
 .bottomnav a span{text-align:center;line-height:1.15}
+
+/* ---------- compact layout (more on one screen) ---------- */
+html,body{font-size:14px;line-height:1.4}
+h1{font-size:26px}
+h2{font-size:19px;margin:14px 0 6px}
+h3{font-size:17px;margin-bottom:4px}
+main{padding:12px 12px calc(76px + var(--safe-b))}
+@media (min-width:900px){main{padding:16px 22px 32px}.sidenav{width:200px;padding:12px 8px}.sidenav a{padding:8px 10px}}
+.topbar{padding:6px 14px;padding-top:calc(6px + env(safe-area-inset-top,0px))}
+.topbar img{width:30px;height:34px}
+.topbar .brand b{font-size:19px}
+.layout{min-height:calc(100vh - 48px)}
+@media (min-width:900px){.sidenav{top:48px;height:calc(100vh - 48px)}}
+.pagehead{margin-bottom:8px;gap:8px}
+.pagehead .sub{font-size:13px;margin-top:2px}
+.tabs{margin:2px 0 8px;gap:4px}
+.tabs button{min-height:34px;padding:5px 12px;font-size:13px}
+.card{padding:10px 12px}
+.card + .card{margin-top:8px}
+.grid{gap:8px}
+.hero{padding:12px 14px;border-radius:12px}
+.hero h1{font-size:24px}
+.hero p{margin-top:4px!important}
+.stat{padding:8px 10px}.stat b{font-size:26px}
+.daygroup{margin:12px 0 4px}.daygroup b{font-size:17px}
+.item{padding:6px 10px;margin-bottom:4px;gap:10px;border-radius:9px}
+.item .time{min-width:52px;font-size:13px}
+.item .time small{font-size:11px}
+.item .title{font-size:14px}
+.item .meta{font-size:12.5px;margin-top:0}
+.item .side{gap:4px}
+.badge{font-size:11px;padding:1px 6px}
+@media (min-width:700px){
+  .item{align-items:center}
+  .item .main{display:flex;flex-wrap:wrap;column-gap:10px;align-items:baseline}
+  .item .side{flex-direction:row;align-items:center}
+  .item .time small{display:inline;margin-left:4px}
+}
+.btn{min-height:36px;padding:6px 12px;font-size:13.5px;border-radius:9px}
+.btn.small{min-height:30px;padding:4px 10px;font-size:12.5px}
+input[type=text],input[type=email],input[type=tel],input[type=date],input[type=number],input[type=time],select,textarea{min-height:36px;padding:6px 9px;border-radius:9px}
+.field{margin-bottom:8px}
+.filters{gap:6px;margin-bottom:6px}
+.filters select,.filters input{min-width:110px;flex:1 1 110px;max-width:210px}
+th,td{padding:6px 8px}
+.weeknav b{font-size:17px;min-width:130px}
+.empty{padding:18px 10px}
+.fgrid .cell{min-height:40px;padding:4px 6px;font-size:12px}
+.avcell{min-height:38px}
+.avgrid{gap:4px}
+.modal{padding:14px 14px calc(14px + var(--safe-b))}
+
+/* toolbar + segmented toggles */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:2px;gap:2px}
+.seg button{border:0;background:transparent;border-radius:8px;padding:6px 12px;font-weight:600;font-size:13px;cursor:pointer;min-height:32px;color:var(--ink)}
+.seg button.on{background:var(--maroon);color:#fff}
+.seg.small button{padding:4px 10px;font-size:12.5px;min-height:28px}
+.dutyline{display:flex;gap:6px;align-items:flex-start;font-size:12.5px;color:var(--muted);background:#FBF6E6;border:1px solid #EFE2B8;border-radius:8px;padding:4px 8px;margin:0 0 4px}
+.dutyline svg{width:14px;height:14px;margin-top:2px;color:var(--warn)}
+.dutyline b{color:var(--ink);margin-right:4px}
+.dutyline .dpark{display:inline-block;margin-right:12px}
+@media (max-width:699px){
+  .pagehead .sub{display:none}
+  .filters select{flex:1 1 30%;min-width:0}
+  .weeknav b{min-width:0;font-size:16px}
+}

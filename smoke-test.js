@@ -161,6 +161,52 @@ const ok = m => console.log('  ✓', m);
     const sp = await call('admin', 'POST', '/api/import/sportsconnect/preview', { csv: sc }); assert.equal(sp[0].teamAction, 'add');
     await call('admin', 'POST', '/api/import/sportsconnect/apply', { csv: sc }); assert(get(`SELECT * FROM teams WHERE name='JMAA Rockets'`)); ok('Sports Connect import');
 
+    // ----- coaches on more than one team -----
+    {
+      const conf = await call('admin', 'GET', '/api/conflicts');
+      assert(conf.coaches.length >= 1); ok(`${conf.coaches.length} coaches on 2+ teams listed; ${conf.conflicts.length} conflicts after building`);
+      const co = conf.coaches[0];
+      const [tA, tB] = co.teams.map(t => t.id);
+      const evA = get(`SELECT * FROM events WHERE (team_id=? OR home_team_id=? OR away_team_id=?) AND status='scheduled' ORDER BY date LIMIT 1`, tA, tA, tA);
+      const evB = get(`SELECT * FROM events WHERE (team_id=? OR home_team_id=? OR away_team_id=?) AND status='scheduled' AND date<>? ORDER BY date LIMIT 1`, tB, tB, tB, evA.date);
+      // move B onto A's night at the other park, same time -> warning but not blocked
+      const otherField = get(`SELECT f.id FROM fields f WHERE f.park_id<>(SELECT park_id FROM fields WHERE id=?) AND f.kind=(SELECT kind FROM fields WHERE id=?) LIMIT 1`, evA.field_id, evB.field_id)
+        || get(`SELECT id FROM fields WHERE park_id<>(SELECT park_id FROM fields WHERE id=?) LIMIT 1`, evA.field_id);
+      run('DELETE FROM events WHERE date=? AND field_id=? AND id<>?', evA.date, otherField.id, evB.id);
+      const mv = await call('admin', 'PATCH', `/api/events/${evB.id}`, { date: evA.date, fieldId: otherField.id, start: evA.start, end: evA.end, notify: false });
+      assert(mv.ok && mv.warnings.length && mv.warnings[0].kind === 'overlap'); ok('moving a team on top of the coach\'s other team warns, but is allowed');
+      const wk = await call('admin', 'GET', `/api/events?start=${evA.date}&end=${evA.date}`);
+      const badge = wk.find(e => e.id === evB.id).conflicts;
+      assert(badge.length && badge[0].kind === 'overlap'); ok('conflict badge appears on both events');
+      await call('admin', 'POST', '/api/conflicts/ack', { key: badge[0].key });
+      const wk2 = await call('admin', 'GET', `/api/events?start=${evA.date}&end=${evA.date}`);
+      assert.equal(wk2.find(e => e.id === evB.id).conflicts.length, 0); ok('"Mark as OK" clears the badge');
+    }
+    // ----- practice coaches can't schedule -----
+    {
+      const pc = get(`SELECT p.*, tc.team_id FROM team_coaches tc JOIN people p ON p.id=tc.person_id WHERE tc.role='practice' LIMIT 1`);
+      await login('pcoach', pc.email);
+      const me2 = await call('pcoach', 'GET', '/api/me');
+      assert(me2.roles.coach && !me2.roles.teamScheduler); ok('practice coach sees their team but has no scheduling role');
+      let refused = false;
+      try { await call('pcoach', 'POST', '/api/practice/requests', { teamId: pc.team_id, date: '2030-01-07', fieldId: 1, slotCode: 'early' }); } catch (e) { refused = /head coach or an assistant/.test(e.message); }
+      assert(refused); ok('practice coach cannot request practices');
+    }
+    // ----- seasons -----
+    {
+      const before = (await call('admin', 'GET', '/api/meta')).teams.length;
+      const ns = await call('admin', 'POST', '/api/seasons', { kind: 'All-Stars', year: 2031, practice_start: '2031-06-02', game_start: '2031-06-16', game_weeks: 3, activate: true });
+      const meta2 = await call('admin', 'GET', '/api/meta');
+      assert.equal(meta2.settings.season_name, 'All-Stars 2031'); assert.equal(meta2.teams.length, 0); assert.equal(meta2.settings.game_start, '2031-06-16');
+      ok('new season (All-Stars 2031) starts with no teams and its own dates');
+      await call('admin', 'POST', '/api/teams', { divisionId: 2, name: 'All-Stars 10U' });
+      assert.equal((await call('admin', 'GET', '/api/meta')).teams.length, 1); ok('teams added go into the current season');
+      const list = await call('admin', 'GET', '/api/seasons');
+      const old = list.find(x => !x.current && x.teams > 1);
+      await call('admin', 'POST', `/api/seasons/${old.id}/activate`);
+      assert.equal((await call('admin', 'GET', '/api/meta')).teams.length, before); ok('switching back brings the old season\'s teams back');
+    }
+
     // permissions
     let denied = false; try { await call('coach', 'POST', '/api/build/games', {}); } catch (e) { denied = /403/.test(e.message); } assert(denied); ok('coach cannot rebuild schedules');
     console.log('\nAll checks passed.');

@@ -14,6 +14,8 @@ const deadlineDays = () => Number(setting('request_deadline_days', 3));
 const slotStart = r => T.at(r.date, r.start || '00:00');
 const decisionTime = r => new Date(slotStart(r).getTime() - deadlineDays() * 86400000);
 
+// Head and assistant coaches manage a team's practices; practice coaches only see the schedule.
+const MANAGE_SQL = "SELECT 1 FROM team_coaches WHERE team_id=? AND person_id=? AND role IN ('head','assistant')";
 function coachIdsOf(teamId) { return all('SELECT person_id FROM team_coaches WHERE team_id=?', teamId).map(r => r.person_id); }
 
 function seasonEnd() {
@@ -73,7 +75,7 @@ function describe(date, fieldId, start) {
 function requestPractice(person, teamId, date, fieldId, slotCode, preference = null) {
   const team = get('SELECT * FROM teams WHERE id=?', teamId);
   if (!team) throw new Error('Team not found');
-  if (!get('SELECT 1 FROM team_coaches WHERE team_id=? AND person_id=?', teamId, person.id) && !person.is_admin) throw new Error('You are not a coach on that team.');
+  if (!get(MANAGE_SQL, teamId, person.id) && !person.is_admin) throw new Error('Only the head coach or an assistant coach can schedule for this team.');
   const slot = get('SELECT * FROM field_slots WHERE field_id=? AND code=?', fieldId, slotCode);
   if (!slot) throw new Error('That slot does not exist.');
   const field = get('SELECT f.*, p.short FROM fields f JOIN parks p ON p.id=f.park_id WHERE f.id=?', fieldId);
@@ -185,12 +187,12 @@ function processDeadlines(now = new Date()) {
 function cancelRequest(person, requestId) {
   const r = get('SELECT * FROM practice_requests WHERE id=?', requestId);
   if (!r || r.status !== 'pending') throw new Error('Request not found.');
-  if (!person.is_admin && !get('SELECT 1 FROM team_coaches WHERE team_id=? AND person_id=?', r.team_id, person.id)) throw new Error('Not your team.');
+  if (!person.is_admin && !get(MANAGE_SQL, r.team_id, person.id)) throw new Error('Not your team.');
   run(`UPDATE practice_requests SET status='cancelled', decided_at=datetime('now') WHERE id=?`, requestId);
 }
 
 function reorderRequests(person, teamId, orderedIds) {
-  if (!person.is_admin && !get('SELECT 1 FROM team_coaches WHERE team_id=? AND person_id=?', teamId, person.id)) throw new Error('Not your team.');
+  if (!person.is_admin && !get(MANAGE_SQL, teamId, person.id)) throw new Error('Not your team.');
   tx(() => orderedIds.forEach((id, i) => run(`UPDATE practice_requests SET preference=? WHERE id=? AND team_id=? AND status='pending'`, i + 1, id, teamId)));
 }
 
@@ -198,7 +200,7 @@ function reorderRequests(person, teamId, orderedIds) {
 function proposePracticeSwap(person, eventA, eventB, message = '') {
   const a = get('SELECT * FROM events WHERE id=?', eventA), b = get('SELECT * FROM events WHERE id=?', eventB);
   if (!a || !b || a.type !== 'practice' || b.type !== 'practice') throw new Error('Both must be practices.');
-  if (!get('SELECT 1 FROM team_coaches WHERE team_id=? AND person_id=?', a.team_id, person.id) && !person.is_admin) throw new Error('The first practice must be your team\'s.');
+  if (!get(MANAGE_SQL, a.team_id, person.id) && !person.is_admin) throw new Error('The first practice must be your team\'s.');
   if (a.team_id === b.team_id) throw new Error('Pick another team\'s practice.');
   const id = run(`INSERT INTO swaps(kind,from_person,from_team,to_team,event_a,event_b,message) VALUES('practice',?,?,?,?,?,?)`,
     person.id, a.team_id, b.team_id, eventA, eventB, message).lastInsertRowid;
@@ -210,7 +212,7 @@ function proposePracticeSwap(person, eventA, eventB, message = '') {
 function inviteScrimmage(person, eventA, toTeamId, message = '') {
   const a = get('SELECT * FROM events WHERE id=?', eventA);
   if (!a || a.type !== 'practice') throw new Error('Pick one of your practices.');
-  if (!get('SELECT 1 FROM team_coaches WHERE team_id=? AND person_id=?', a.team_id, person.id) && !person.is_admin) throw new Error('Not your team\'s practice.');
+  if (!get(MANAGE_SQL, a.team_id, person.id) && !person.is_admin) throw new Error('Not your team\'s practice.');
   const other = get('SELECT * FROM teams WHERE id=?', toTeamId);
   if (!other || other.division_id !== a.division_id) throw new Error('Scrimmages are between two teams in the same division.');
   if (teamBusyThatDay(toTeamId, a.date)) throw new Error(`${other.name} already has something that day.`);
@@ -224,7 +226,7 @@ function respondSwap(person, swapId, accept) {
   const s = get('SELECT * FROM swaps WHERE id=?', swapId);
   if (!s || s.status !== 'open') throw new Error('That offer is no longer open.');
   if (s.kind === 'umpire') throw new Error('Use the umpire shift tools.');
-  const isTarget = get('SELECT 1 FROM team_coaches WHERE team_id=? AND person_id=?', s.to_team, person.id) || person.is_admin;
+  const isTarget = get(MANAGE_SQL, s.to_team, person.id) || person.is_admin;
   const isSender = s.from_person === person.id;
   if (!accept) {
     if (!isTarget && !isSender) throw new Error('Not your offer.');
