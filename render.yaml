@@ -1,0 +1,14 @@
+# Render blueprint for the free online DEMO (resets on every restart).
+services:
+  - type: web
+    name: csll-schedules-demo
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run demo
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: TZ
+        value: America/Chicago
